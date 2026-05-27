@@ -1,0 +1,14 @@
+[project]
+name = "ba-monitor-kirisame"
+version = "0.1.0"
+description = "Broken Arrow QQ data analysis bot"
+requires-python = ">=3.10"
+dependencies = [
+  "qq-botpy>=1.2.1",
+  "pydantic-settings>=2.2.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
