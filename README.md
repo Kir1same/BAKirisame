@@ -54,12 +54,16 @@ python -m ba_monitor
 
 ```text
 /help
-/player <SteamID>
-/recent <SteamID>
+/bind <SteamID>
+/me
+/player [SteamID]
+/recent [SteamID]
 /match <对局ID>
 /meta
 /unit <单位名>
 ```
+
+绑定账号后，`/me`、`/player`、`/recent` 可以不填写 SteamID，机器人会默认查询当前 QQ 用户绑定的账号。
 
 ## 测试
 

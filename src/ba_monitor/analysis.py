@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+from ba_monitor.bindings import BindingStore, UserContext, normalize_steam_id
 from ba_monitor.commands import Command, CommandType, help_text
 from ba_monitor.providers import (
     GameDataProvider,
@@ -11,24 +12,39 @@ from ba_monitor.providers import (
 )
 
 
-async def handle_command(command: Command, provider: GameDataProvider) -> str:
+async def handle_command(
+    command: Command,
+    provider: GameDataProvider,
+    context: UserContext | None = None,
+    bindings: BindingStore | None = None,
+) -> str:
     try:
-        return await _handle_command(command, provider)
+        return await _handle_command(command, provider, context or UserContext(), bindings or BindingStore())
     except ValueError as exc:
         return str(exc)
 
 
-async def _handle_command(command: Command, provider: GameDataProvider) -> str:
+async def _handle_command(
+    command: Command,
+    provider: GameDataProvider,
+    context: UserContext,
+    bindings: BindingStore,
+) -> str:
     if command.type == CommandType.HELP:
         return help_text()
+    if command.type == CommandType.BIND:
+        return handle_bind(command.argument, context, bindings)
+    if command.type == CommandType.UNBIND:
+        return handle_unbind(context, bindings)
+    if command.type == CommandType.ME:
+        steam_id = require_bound_steam_id(context, bindings)
+        return format_player(await provider.get_player(steam_id))
     if command.type == CommandType.PLAYER:
-        if not command.argument:
-            return "请提供 SteamID64，例如：/player 76561198157609957"
-        return format_player(await provider.get_player(command.argument))
+        steam_id = command.argument.strip() or require_bound_steam_id(context, bindings)
+        return format_player(await provider.get_player(steam_id))
     if command.type == CommandType.RECENT:
-        if not command.argument:
-            return "请提供 SteamID64，例如：/recent 76561198157609957"
-        return format_recent_matches(await provider.get_recent_matches(command.argument))
+        steam_id = command.argument.strip() or require_bound_steam_id(context, bindings)
+        return format_recent_matches(await provider.get_recent_matches(steam_id))
     if command.type == CommandType.MATCH:
         if not command.argument:
             return "请提供对局 ID，例如：/match 5545812"
@@ -40,6 +56,29 @@ async def _handle_command(command: Command, provider: GameDataProvider) -> str:
     if command.type == CommandType.META:
         return format_meta(await provider.get_meta())
     return "我还不认识这个指令。发送 /help 查看可用指令。"
+
+
+def handle_bind(argument: str, context: UserContext, bindings: BindingStore) -> str:
+    if not context.user_key:
+        return "当前 QQ 场景没有可用用户标识，暂时不能绑定。"
+    steam_id = normalize_steam_id(argument)
+    bindings.bind(context.user_key, steam_id)
+    return f"绑定成功。以后发送 /me 或 /recent 就会默认查询 SteamID：{steam_id}"
+
+
+def handle_unbind(context: UserContext, bindings: BindingStore) -> str:
+    if not context.user_key:
+        return "当前 QQ 场景没有可用用户标识，暂时不能解绑。"
+    if bindings.unbind(context.user_key):
+        return "已解除绑定。"
+    return "你还没有绑定账号。"
+
+
+def require_bound_steam_id(context: UserContext, bindings: BindingStore) -> str:
+    steam_id = bindings.get_steam_id(context.user_key)
+    if not steam_id:
+        raise ValueError("你还没有绑定账号。先发送 /bind <SteamID64>，例如：/bind 76561198157609957")
+    return steam_id
 
 
 def format_player(stats: PlayerStats) -> str:

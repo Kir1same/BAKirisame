@@ -10,6 +10,7 @@ import botpy
 from botpy.message import C2CMessage, GroupMessage, Message
 
 from ba_monitor.analysis import handle_command
+from ba_monitor.bindings import BindingStore, UserContext
 from ba_monitor.commands import parse_command
 from ba_monitor.config import get_settings
 from ba_monitor.providers import GameDataProvider, build_provider
@@ -24,6 +25,7 @@ class BrokenArrowBot(botpy.Client):
     def __init__(self, provider: GameDataProvider, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.provider = provider
+        self.bindings = BindingStore()
 
     async def on_at_message_create(self, message: Message) -> None:
         log_qq_message("channel", message)
@@ -37,21 +39,21 @@ class BrokenArrowBot(botpy.Client):
         log_qq_message("c2c", message)
         await self._reply_c2c(message)
 
-    async def _render(self, content: str) -> str:
+    async def _render(self, content: str, context: UserContext) -> str:
         command = parse_command(content)
         try:
-            return await handle_command(command, self.provider)
+            return await handle_command(command, self.provider, context, self.bindings)
         except Exception:
             LOGGER.exception("failed to handle command")
             return "查询失败了。可能是数据接口暂时不可用，请稍后再试。"
 
     async def _reply_channel(self, message: Message) -> None:
-        content = await self._render(message.content)
+        content = await self._render(message.content, build_user_context(message))
         log_bot_reply("channel", message, content)
         await message.reply(content=content)
 
     async def _reply_group(self, message: GroupMessage) -> None:
-        content = await self._render(message.content)
+        content = await self._render(message.content, build_user_context(message))
         log_bot_reply("group", message, content)
         await message._api.post_group_message(
             group_openid=message.group_openid,
@@ -61,7 +63,7 @@ class BrokenArrowBot(botpy.Client):
         )
 
     async def _reply_c2c(self, message: C2CMessage) -> None:
-        content = await self._render(message.content)
+        content = await self._render(message.content, build_user_context(message))
         log_bot_reply("c2c", message, content)
         await message._api.post_c2c_message(
             openid=message.author.user_openid,
@@ -107,8 +109,7 @@ def log_qq_message(scene: str, message: Any) -> None:
         "guild_id": getattr(message, "guild_id", None),
         "channel_id": getattr(message, "channel_id", None),
     }
-    with QQ_MESSAGE_LOG.open("a", encoding="utf-8") as file:
-        file.write(json.dumps(record, ensure_ascii=False) + "\n")
+    append_jsonl(QQ_MESSAGE_LOG, record)
     LOGGER.info("qq message scene=%s id=%s content=%r", scene, record["message_id"], record["content"])
 
 
@@ -124,9 +125,13 @@ def log_bot_reply(scene: str, message: Any, content: str) -> None:
         "guild_id": getattr(message, "guild_id", None),
         "channel_id": getattr(message, "channel_id", None),
     }
-    with QQ_MESSAGE_LOG.open("a", encoding="utf-8") as file:
-        file.write(json.dumps(record, ensure_ascii=False) + "\n")
+    append_jsonl(QQ_MESSAGE_LOG, record)
     LOGGER.info("qq reply scene=%s reply_to=%s content=%r", scene, record["reply_to_message_id"], content)
+
+
+def append_jsonl(path: Path, record: dict[str, Any]) -> None:
+    with path.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def extract_author(message: Any) -> dict[str, Any]:
@@ -137,7 +142,20 @@ def extract_author(message: Any) -> dict[str, Any]:
         "id": getattr(author, "id", None),
         "username": getattr(author, "username", None),
         "user_openid": getattr(author, "user_openid", None),
+        "member_openid": getattr(author, "member_openid", None),
     }
+
+
+def build_user_context(message: Any) -> UserContext:
+    author = getattr(message, "author", None)
+    if author is None:
+        return UserContext()
+    user_key = (
+        getattr(author, "user_openid", None)
+        or getattr(author, "member_openid", None)
+        or getattr(author, "id", None)
+    )
+    return UserContext(user_key=str(user_key)) if user_key else UserContext()
 
 
 def start_log_pruner() -> None:
