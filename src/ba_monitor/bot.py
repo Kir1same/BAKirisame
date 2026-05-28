@@ -12,7 +12,7 @@ from botpy.message import C2CMessage, GroupMessage, Message
 
 from ba_monitor.analysis import handle_command, parse_recent_argument, require_bound_steam_id
 from ba_monitor.bindings import BindingStore, UserContext
-from ba_monitor.cards import render_player_card, render_rank_card, render_recent_card, render_server_condition_card
+from ba_monitor.cards import render_help_card, render_player_card, render_rank_card, render_recent_card, render_server_condition_card
 from ba_monitor.commands import CommandType, parse_command
 from ba_monitor.config import get_settings
 from ba_monitor.image_host import ImageHost, build_image_host
@@ -25,10 +25,11 @@ RETENTION_SECONDS = 24 * 60 * 60
 
 
 class BrokenArrowBot(botpy.Client):
-    def __init__(self, provider: GameDataProvider, image_host: ImageHost, *args, **kwargs) -> None:
+    def __init__(self, provider: GameDataProvider, image_host: ImageHost, help_card_path: Path, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.provider = provider
         self.image_host = image_host
+        self.help_card_path = help_card_path
         self.bindings = BindingStore()
 
     async def on_at_message_create(self, message: Message) -> None:
@@ -84,6 +85,8 @@ class BrokenArrowBot(botpy.Client):
 
     async def _reply_group_card(self, message: GroupMessage) -> bool:
         command = parse_command(message.content)
+        if command.type == CommandType.HELP:
+            return await self._reply_group_help_card(message)
         if command.type == CommandType.RECENT:
             return await self._reply_group_recent_card(message)
         if command.type == CommandType.RANK:
@@ -119,6 +122,8 @@ class BrokenArrowBot(botpy.Client):
 
     async def _reply_c2c_card(self, message: C2CMessage) -> bool:
         command = parse_command(message.content)
+        if command.type == CommandType.HELP:
+            return await self._reply_c2c_help_card(message)
         if command.type == CommandType.RECENT:
             return await self._reply_c2c_recent_card(message)
         if command.type == CommandType.RANK:
@@ -150,6 +155,48 @@ class BrokenArrowBot(botpy.Client):
             return False
         except Exception:
             LOGGER.exception("failed to send c2c player card")
+            return False
+
+    async def _reply_group_help_card(self, message: GroupMessage) -> bool:
+        try:
+            ensure_help_card(self.help_card_path)
+            image_url = await self.image_host.upload(self.help_card_path)
+            media = await message._api.post_group_file(
+                group_openid=message.group_openid,
+                file_type=1,
+                url=image_url,
+            )
+            log_bot_reply("group", message, f"[image] {image_url}")
+            await message._api.post_group_message(
+                group_openid=message.group_openid,
+                msg_type=7,
+                msg_id=message.id,
+                media=media,
+            )
+            return True
+        except Exception:
+            LOGGER.exception("failed to send group help card")
+            return False
+
+    async def _reply_c2c_help_card(self, message: C2CMessage) -> bool:
+        try:
+            ensure_help_card(self.help_card_path)
+            image_url = await self.image_host.upload(self.help_card_path)
+            media = await message._api.post_c2c_file(
+                openid=message.author.user_openid,
+                file_type=1,
+                url=image_url,
+            )
+            log_bot_reply("c2c", message, f"[image] {image_url}")
+            await message._api.post_c2c_message(
+                openid=message.author.user_openid,
+                msg_type=7,
+                msg_id=message.id,
+                media=media,
+            )
+            return True
+        except Exception:
+            LOGGER.exception("failed to send c2c help card")
             return False
 
     async def _reply_group_rank_card(self, message: GroupMessage) -> bool:
@@ -334,6 +381,12 @@ def build_intents() -> botpy.Intents:
     return botpy.Intents(public_guild_messages=True, public_messages=True)
 
 
+def ensure_help_card(path: Path) -> Path:
+    if not path.exists():
+        return render_help_card(path)
+    return path
+
+
 def configure_logging(level: str) -> None:
     LOG_DIR.mkdir(exist_ok=True)
     prune_logs()
@@ -482,7 +535,8 @@ def main() -> None:
     ensure_event_loop()
     provider = build_provider(settings.ba_api_base_url, settings.ba_api_key, settings.data_source)
     image_host = build_image_host(settings.image_public_base_url, settings.image_public_dir)
-    client = BrokenArrowBot(provider=provider, image_host=image_host, intents=build_intents())
+    help_card_path = render_help_card(Path(settings.image_public_dir) / "help.png")
+    client = BrokenArrowBot(provider=provider, image_host=image_host, help_card_path=help_card_path, intents=build_intents())
     client.run(appid=settings.qq_app_id, secret=settings.qq_app_secret)
 
 

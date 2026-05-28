@@ -230,6 +230,82 @@ def render_server_condition_card(condition: ServerCondition, path: Path | None =
     return save(image, path or default_path("server", "condition"))
 
 
+def render_help_card(path: Path | None = None) -> Path:
+    sections = help_card_sections()
+    start_y = 372
+    section_gap = 34
+    section_header_to_rows = 74
+    row_h = 58
+    content_bottom = start_y
+    for _, rows in sections:
+        content_bottom += section_header_to_rows + len(rows) * row_h + section_gap
+    height = content_bottom + 110
+    image, draw = new_light_canvas(height)
+    draw.rectangle((48, 64, 1152, 238), fill="#eef1f5")
+    draw.rectangle((64, 84, 72, 218), fill="#9aa1aa")
+    draw_text(draw, (92, 92), "帮助菜单", 54, "#11151a", bold=True)
+    draw_text(draw, (96, 158), "BA MONITOR KIRISAME COMMANDS", 24, "#7a828d", bold=True)
+    draw_text(draw, (620, 104), "BA Monitor Kirisame", 28, "#5fb4ff", bold=True)
+    draw_text(draw, (620, 150), "BROKEN ARROW DATA ASSISTANT", 22, "#6f7782")
+
+    draw.rectangle((48, 270, 1152, 348), fill="#259b24")
+    draw_text(draw, (74, 285), "测试版", 42, "#ffffff", bold=True)
+    draw_text(draw, (330, 304), "当前仅展示已接入并可稳定使用的功能", 22, "#ffffff", bold=True)
+    draw_text(draw, (914, 288), "HELP", 38, "#ffffff", bold=True)
+
+    y = start_y
+    for title_text, rows in sections:
+        draw_light_section_header(draw, 48, y, 1104, title_text)
+        row_y = y + section_header_to_rows
+        for index, (command, description) in enumerate(rows):
+            fill = "#e8eaee" if index % 2 == 0 else "#f0f2f5"
+            draw.rectangle((76, row_y, 1124, row_y + row_h), fill=fill)
+            draw_text(draw, (104, row_y + 14), command, 23, "#11151a", bold=True)
+            draw_text(draw, (524, row_y + 15), description, 22, "#555d67", bold=True)
+            row_y += row_h
+        y = row_y + section_gap
+
+    footer_y = height - 56
+    draw_text(draw, (116, footer_y), "BA Monitor Kirisame 测试版 · data via BArmory STB / BATrace", 22, "#9ca3ad", bold=True)
+    draw_text(draw, (832, footer_y), "帮助图随部署版本更新", 20, "#a8afb8", bold=True)
+    return save(image, path or default_path("help", "commands"))
+
+
+def help_card_sections() -> list[tuple[str, list[tuple[str, str]]]]:
+    return [
+        (
+            "账号绑定",
+            [
+                ("/bind <SteamID64|玩家ID|玩家名>", "绑定自己的断箭账号，绑定后 /me、/recent、/rank 可省略参数"),
+                ("/unbind", "解除当前 QQ 用户绑定"),
+            ],
+        ),
+        (
+            "玩家数据",
+            [
+                ("/me", "查询已绑定账号的个人数据卡片"),
+                ("/player <SteamID64|玩家ID|玩家名>", "查询任意玩家的个人数据卡片"),
+                ("/rank", "查询已绑定账号在全服 ELO 分布中的位置"),
+                ("/rank <SteamID64|玩家ID|玩家名>", "查询任意玩家在全服 ELO 分布中的位置"),
+            ],
+        ),
+        (
+            "近期战绩",
+            [
+                ("/recent", "查询已绑定账号最近 1 天战绩"),
+                ("/recent <天数>", "查询最近 N 天战绩，支持 1-30 天"),
+                ("/recent <天数> <玩家ID|玩家名>", "查询指定玩家最近 N 天战绩"),
+            ],
+        ),
+        (
+            "全服状态",
+            [
+                ("/serverCondition", "查询当前在线人数、战斗中人数与地区服务器状态"),
+            ],
+        ),
+    ]
+
+
 def render_match_card(match: MatchSummary, path: Path | None = None) -> Path:
     image, draw = new_canvas()
     title(draw, "BROKEN ARROW", "MATCH REPORT", f"#{match.match_id}")
@@ -463,7 +539,7 @@ def draw_compact_analysis_panel(draw: ImageDraw.ImageDraw, x: int, y: int, analy
     for unit in analysis.highlight_units[:3]:
         draw_text(draw, (x + 594, row_y), truncate(unit.name, 18), 22, "#343a42", bold=True)
         draw_text(draw, (x + 838, row_y), unit.category, 22, category_color(unit.category), bold=True)
-        draw_text(draw, (x + 930, row_y), f"出场 {unit.spawn_count}", 22, "#555d67", bold=True)
+        draw_text(draw, (x + 930, row_y), f"伤害 {format_compact_number(unit.total_damage)}", 22, "#30acc4", bold=True)
         row_y += 44
 
     axes = " / ".join(style_axis_text(axis) for axis in analysis.play_style_axes[:3])
@@ -788,6 +864,17 @@ def format_optional_ratio(value: float | None) -> str:
 
 def format_optional_decimal(value: float | None, digits: int) -> str:
     return "N/A" if value is None else f"{value:.{digits}f}"
+
+
+def format_compact_number(value: float | int) -> str:
+    absolute = abs(float(value))
+    if absolute >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if absolute >= 10_000:
+        return f"{value / 1_000:.0f}k"
+    if absolute >= 1_000:
+        return f"{value / 1_000:.1f}k"
+    return f"{round(value):,}"
 
 
 def format_result_cn(result: str) -> str:

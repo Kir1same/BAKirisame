@@ -2,6 +2,7 @@ from ba_monitor.cards import (
     rank_percent_text,
     rank_tier_color,
     render_match_card,
+    render_help_card,
     render_player_card,
     render_rank_card,
     render_recent_card,
@@ -141,6 +142,13 @@ def test_render_server_condition_card(tmp_path) -> None:
     )
 
     path = render_server_condition_card(condition, tmp_path / "server.png")
+
+    assert path.exists()
+    assert path.stat().st_size > 10_000
+
+
+def test_render_help_card(tmp_path) -> None:
+    path = render_help_card(tmp_path / "help.png")
 
     assert path.exists()
     assert path.stat().st_size > 10_000
