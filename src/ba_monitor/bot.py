@@ -1,5 +1,6 @@
 import json
 import logging
+import asyncio
 import threading
 import time
 from datetime import datetime, timezone
@@ -362,7 +363,15 @@ def prune_text_by_prefix_timestamp(path: Path, cutoff: float) -> None:
 def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
+    ensure_event_loop()
     provider = build_provider(settings.ba_api_base_url, settings.ba_api_key, settings.data_source)
     image_host = build_image_host(settings.image_public_base_url, settings.image_public_dir)
     client = BrokenArrowBot(provider=provider, image_host=image_host, intents=build_intents())
     client.run(appid=settings.qq_app_id, secret=settings.qq_app_secret)
+
+
+def ensure_event_loop() -> None:
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
