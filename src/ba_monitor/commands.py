@@ -69,14 +69,12 @@ def help_text() -> str:
     return "\n".join(
         [
             "BA Monitor Kirisame",
-            "/bind <SteamID> - 绑定自己的断箭账号",
-            "/me - 查看已绑定账号概览",
-            "/recent - 查询自己的近期战绩",
-            "/player [SteamID] - 查询玩家；不填则查自己",
-            "/recent [SteamID] - 查询近期战绩；不填则查自己",
-            "/match <对局ID> - 查询单场对局简报",
-            "/unit <单位名> - 查询单位表现（当前为示例数据）",
-            "/meta - 查看环境摘要（当前为示例数据）",
+            "当前为测试版，仅列出已稳定指令：",
+            "/bind <SteamID64> - 绑定自己的断箭账号",
             "/unbind - 解除绑定",
+            "/me - 查询已绑定账号的个人数据卡片",
+            "/recent - 查询已绑定账号最近 1 天战绩",
+            "/recent <天数> - 查询最近 N 天战绩，支持 1-30 天",
+            "下一阶段：/player <SteamID64> 查询其他玩家",
         ]
     )
