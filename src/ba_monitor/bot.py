@@ -12,7 +12,7 @@ from botpy.message import C2CMessage, GroupMessage, Message
 
 from ba_monitor.analysis import handle_command, parse_recent_argument, require_bound_steam_id
 from ba_monitor.bindings import BindingStore, UserContext
-from ba_monitor.cards import render_player_card, render_rank_card, render_recent_card
+from ba_monitor.cards import render_player_card, render_rank_card, render_recent_card, render_server_condition_card
 from ba_monitor.commands import CommandType, parse_command
 from ba_monitor.config import get_settings
 from ba_monitor.image_host import ImageHost, build_image_host
@@ -88,6 +88,8 @@ class BrokenArrowBot(botpy.Client):
             return await self._reply_group_recent_card(message)
         if command.type == CommandType.RANK:
             return await self._reply_group_rank_card(message)
+        if command.type == CommandType.SERVER_CONDITION:
+            return await self._reply_group_server_condition_card(message)
         if command.type not in (CommandType.ME, CommandType.PLAYER):
             return False
         context = build_user_context(message)
@@ -121,6 +123,8 @@ class BrokenArrowBot(botpy.Client):
             return await self._reply_c2c_recent_card(message)
         if command.type == CommandType.RANK:
             return await self._reply_c2c_rank_card(message)
+        if command.type == CommandType.SERVER_CONDITION:
+            return await self._reply_c2c_server_condition_card(message)
         if command.type not in (CommandType.ME, CommandType.PLAYER):
             return False
         context = build_user_context(message)
@@ -200,6 +204,48 @@ class BrokenArrowBot(botpy.Client):
             return False
         except Exception:
             LOGGER.exception("failed to send c2c rank card")
+            return False
+
+    async def _reply_group_server_condition_card(self, message: GroupMessage) -> bool:
+        try:
+            condition = await self.provider.get_server_condition()
+            image_url = await self.image_host.upload(render_server_condition_card(condition))
+            media = await message._api.post_group_file(
+                group_openid=message.group_openid,
+                file_type=1,
+                url=image_url,
+            )
+            log_bot_reply("group", message, f"[image] {image_url}")
+            await message._api.post_group_message(
+                group_openid=message.group_openid,
+                msg_type=7,
+                msg_id=message.id,
+                media=media,
+            )
+            return True
+        except Exception:
+            LOGGER.exception("failed to send group server condition card")
+            return False
+
+    async def _reply_c2c_server_condition_card(self, message: C2CMessage) -> bool:
+        try:
+            condition = await self.provider.get_server_condition()
+            image_url = await self.image_host.upload(render_server_condition_card(condition))
+            media = await message._api.post_c2c_file(
+                openid=message.author.user_openid,
+                file_type=1,
+                url=image_url,
+            )
+            log_bot_reply("c2c", message, f"[image] {image_url}")
+            await message._api.post_c2c_message(
+                openid=message.author.user_openid,
+                msg_type=7,
+                msg_id=message.id,
+                media=media,
+            )
+            return True
+        except Exception:
+            LOGGER.exception("failed to send c2c server condition card")
             return False
 
     async def _get_player_analysis(self, steam_id: str):

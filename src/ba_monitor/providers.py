@@ -58,6 +58,25 @@ class PlayerDistribution:
 
 
 @dataclass(frozen=True)
+class ServerRegionCondition:
+    region: str
+    total: int
+    active: int
+    last_seen: str | None = None
+
+
+@dataclass(frozen=True)
+class ServerCondition:
+    online: int
+    in_lobby: int
+    in_searching: int
+    in_battle: int
+    instances: int
+    timestamp: str | None
+    regions: list[ServerRegionCondition]
+
+
+@dataclass(frozen=True)
 class MatchSummary:
     match_id: int
     map_id: int | None
@@ -136,6 +155,9 @@ class GameDataProvider(Protocol):
         ...
 
     async def get_player_distribution(self) -> PlayerDistribution:
+        ...
+
+    async def get_server_condition(self) -> ServerCondition:
         ...
 
     async def get_match(self, match_id: str) -> MatchSummary:
@@ -223,6 +245,21 @@ class MockGameDataProvider:
                 for index in range(31)
             ],
             total_players=sum(item.count for item in rating),
+        )
+
+    async def get_server_condition(self) -> ServerCondition:
+        return ServerCondition(
+            online=3157,
+            in_lobby=48,
+            in_searching=45,
+            in_battle=1127,
+            instances=460,
+            timestamp="2026-05-29T06:01:30.000Z",
+            regions=[
+                ServerRegionCondition("亚太", 2, 2, "2026-05-29T06:01:30.000Z"),
+                ServerRegionCondition("北美", 32, 32, "2026-05-29T06:01:30.000Z"),
+                ServerRegionCondition("欧洲", 4, 4, "2026-05-29T06:01:30.000Z"),
+            ],
         )
 
     async def get_match(self, match_id: str) -> MatchSummary:
@@ -343,6 +380,15 @@ class BarmoryStbProvider:
         except Exception as exc:
             raise RuntimeError("无法获取全服分布数据") from exc
         return _player_distribution_from_batrace(payload if isinstance(payload, dict) else {})
+
+    async def get_server_condition(self) -> ServerCondition:
+        payload = await asyncio.to_thread(
+            _request_json,
+            "GET",
+            "https://dash.batrace.top/api/home/server-status",
+            _plain_headers(),
+        )
+        return _server_condition_from_batrace(payload if isinstance(payload, dict) else {})
 
     async def get_match(self, match_id: str) -> MatchSummary:
         numeric_id = int(match_id.strip())
@@ -623,6 +669,29 @@ def _player_distribution_from_batrace(data: dict) -> PlayerDistribution:
         rating=_distribution_buckets(data.get("rating")),
         kd=_distribution_buckets(data.get("kd")),
         total_players=_optional_int(data.get("totalPlayers")),
+    )
+
+
+def _server_condition_from_batrace(data: dict) -> ServerCondition:
+    online = data.get("online") if isinstance(data.get("online"), dict) else {}
+    regions = [
+        ServerRegionCondition(
+            region=str(item.get("region") or "未知"),
+            total=_optional_int(item.get("total")) or 0,
+            active=_optional_int(item.get("active")) or 0,
+            last_seen=str(item.get("lastSeen")) if item.get("lastSeen") else None,
+        )
+        for item in data.get("serversByRegion", [])
+        if isinstance(item, dict)
+    ]
+    return ServerCondition(
+        online=_optional_int(online.get("online")) or 0,
+        in_lobby=_optional_int(online.get("inLobby")) or 0,
+        in_searching=_optional_int(online.get("inSearching")) or 0,
+        in_battle=_optional_int(online.get("inBattle")) or 0,
+        instances=_optional_int(online.get("instances")) or 0,
+        timestamp=str(online.get("timestamp")) if online.get("timestamp") else None,
+        regions=regions,
     )
 
 

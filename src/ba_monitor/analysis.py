@@ -8,6 +8,7 @@ from ba_monitor.providers import (
     MetaSnapshot,
     PlayerStats,
     RecentMatch,
+    ServerCondition,
     UnitStats,
 )
 
@@ -48,6 +49,8 @@ async def _handle_command(
     if command.type == CommandType.RECENT:
         steam_id, days = parse_recent_argument(command.argument, context, bindings)
         return format_recent_matches(await provider.get_recent_matches(steam_id, days=days), days)
+    if command.type == CommandType.SERVER_CONDITION:
+        return format_server_condition(await provider.get_server_condition())
     if command.type == CommandType.MATCH:
         if not command.argument:
             return "请提供对局 ID，例如：/match 5545812"
@@ -114,6 +117,19 @@ def format_rank_position(stats: PlayerStats) -> str:
             f"总玩家数：{total:,}" if total else "总玩家数：暂不可用",
         ]
     )
+
+
+def format_server_condition(condition: ServerCondition) -> str:
+    lines = [
+        "服务器状态：",
+        f"在线：{condition.online:,}    战斗中：{condition.in_battle:,}",
+        f"房间：{condition.in_lobby:,}    搜索中：{condition.in_searching:,}    运行战局：{condition.instances:,}",
+    ]
+    for region in condition.regions:
+        lines.append(f"{region.region}：{region.active}/{region.total} 活跃")
+    if condition.timestamp:
+        lines.append(f"更新时间：{condition.timestamp}")
+    return "\n".join(lines)
 
 
 def parse_recent_argument(argument: str, context: UserContext, bindings: BindingStore) -> tuple[str, int]:

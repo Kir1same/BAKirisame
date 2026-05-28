@@ -27,6 +27,13 @@ def test_parse_rank_command() -> None:
     assert command.argument == "76561198157609957"
 
 
+def test_parse_server_condition_command() -> None:
+    command = parse_command("/serverCondition")
+
+    assert command.type == CommandType.SERVER_CONDITION
+    assert command.argument == ""
+
+
 def test_parse_recent_command() -> None:
     command = parse_command("<@12345> /近期战绩")
 
@@ -41,6 +48,14 @@ async def test_handle_player_command() -> None:
 
     assert "76561198157609957" in response
     assert "ELO" in response
+
+
+@pytest.mark.asyncio
+async def test_handle_server_condition_command() -> None:
+    response = await handle_command(parse_command("/serverCondition"), MockGameDataProvider())
+
+    assert "服务器状态" in response
+    assert "在线" in response
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ from ba_monitor.cards import (
     render_player_card,
     render_rank_card,
     render_recent_card,
+    render_server_condition_card,
     sort_recent_matches,
 )
 from ba_monitor.providers import (
@@ -17,6 +18,8 @@ from ba_monitor.providers import (
     PlayerStats,
     PlayStyleAxis,
     RecentMatch,
+    ServerCondition,
+    ServerRegionCondition,
 )
 
 
@@ -117,6 +120,27 @@ def test_render_rank_card(tmp_path) -> None:
     )
 
     path = render_rank_card(player, distribution, tmp_path / "rank.png")
+
+    assert path.exists()
+    assert path.stat().st_size > 10_000
+
+
+def test_render_server_condition_card(tmp_path) -> None:
+    condition = ServerCondition(
+        online=3157,
+        in_lobby=48,
+        in_searching=45,
+        in_battle=1127,
+        instances=460,
+        timestamp="2026-05-29T06:01:30.000Z",
+        regions=[
+            ServerRegionCondition("亚太", 2, 2),
+            ServerRegionCondition("北美", 32, 32),
+            ServerRegionCondition("欧洲", 4, 4),
+        ],
+    )
+
+    path = render_server_condition_card(condition, tmp_path / "server.png")
 
     assert path.exists()
     assert path.stat().st_size > 10_000

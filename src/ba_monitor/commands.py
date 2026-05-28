@@ -10,6 +10,7 @@ class CommandType(str, Enum):
     PLAYER = "player"
     RANK = "rank"
     RECENT = "recent"
+    SERVER_CONDITION = "serverCondition"
     MATCH = "match"
     META = "meta"
     UNIT = "unit"
@@ -39,6 +40,11 @@ ALIASES = {
     "recent": CommandType.RECENT,
     "近期": CommandType.RECENT,
     "近期战绩": CommandType.RECENT,
+    "servercondition": CommandType.SERVER_CONDITION,
+    "serverCondition": CommandType.SERVER_CONDITION,
+    "server": CommandType.SERVER_CONDITION,
+    "服务器": CommandType.SERVER_CONDITION,
+    "服务器状态": CommandType.SERVER_CONDITION,
     "match": CommandType.MATCH,
     "对局": CommandType.MATCH,
     "meta": CommandType.META,
@@ -81,5 +87,6 @@ def help_text() -> str:
             "/rank <SteamID64|玩家ID|玩家名> - 查询其他玩家全服排名位置",
             "/recent - 查询已绑定账号最近 1 天战绩",
             "/recent <天数> - 查询最近 N 天战绩，支持 1-30 天",
+            "/serverCondition - 查询当前服务器运行状态",
         ]
     )

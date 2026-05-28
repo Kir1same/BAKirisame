@@ -16,6 +16,7 @@ from ba_monitor.providers import (
     PlayerDistribution,
     PlayerStats,
     RecentMatch,
+    ServerCondition,
 )
 
 CARD_DIR = Path("artifacts/cards")
@@ -188,6 +189,45 @@ def render_rank_card(
     draw_text(draw, (116, 1118), "BA Monitor Kirisame 测试版 · data via BArmory STB / BATrace", 22, "#9ca3ad", bold=True)
     draw_text(draw, (376, 1150), "分布统计来自 BATrace 全服样本，橙色柱表示当前 ELO 区间", 20, "#a8afb8", bold=True)
     return save(image, path or default_path("rank", player.steam_id))
+
+
+def render_server_condition_card(condition: ServerCondition, path: Path | None = None) -> Path:
+    image, draw = new_light_canvas(840)
+    health_ratio = safe_rate(sum(region.active for region in condition.regions), sum(region.total for region in condition.regions))
+    banner_color = "#259b24" if health_ratio >= 0.95 else "#f28c28" if health_ratio >= 0.75 else "#d64949"
+
+    draw.rectangle((48, 64, 1152, 238), fill="#eef1f5")
+    draw.rectangle((64, 84, 72, 218), fill="#9aa1aa")
+    draw_text(draw, (92, 92), "服务器状态", 54, "#11151a", bold=True)
+    draw_text(draw, (96, 158), "BROKEN ARROW SERVER CONDITION", 24, "#7a828d", bold=True)
+    draw_text(draw, (620, 104), "BA Monitor Kirisame", 28, "#5fb4ff", bold=True)
+    draw_text(draw, (620, 150), "LIVE SERVER REPORT", 22, "#6f7782")
+
+    draw.rectangle((48, 270, 1152, 348), fill=banner_color)
+    draw_text(draw, (74, 285), server_health_label(health_ratio), 42, "#ffffff", bold=True)
+    draw_text(draw, (330, 304), f"在线服务器：{sum(region.active for region in condition.regions)}", 22, "#ffffff", bold=True)
+    draw_text(draw, (842, 288), f"在线 {condition.online:,}", 38, "#ffffff", bold=True)
+
+    draw_light_section_header(draw, 48, 372, 1104, "实时玩家")
+    draw_server_metric_box(draw, 76, 450, 196, 140, "在线", f"{condition.online:,}", "#259b24")
+    draw_server_metric_box(draw, 292, 450, 196, 140, "战斗中", f"{condition.in_battle:,}", "#30acc4")
+    draw_server_metric_box(draw, 508, 450, 196, 140, "房间", f"{condition.in_lobby:,}", "#63b33d")
+    draw_server_metric_box(draw, 724, 450, 196, 140, "搜索中", f"{condition.in_searching:,}", "#f28c28")
+    draw_server_metric_box(draw, 940, 450, 184, 140, "运行战局", f"{condition.instances:,}", "#7a3db8")
+
+    draw_light_section_header(draw, 48, 626, 1104, "地区服务器")
+    row_y = 698
+    for index, region in enumerate(condition.regions[:5]):
+        fill = "#e8eaee" if index % 2 == 0 else "#f0f2f5"
+        ratio = safe_rate(region.active, region.total)
+        color = "#259b24" if ratio >= 0.95 else "#f28c28" if ratio >= 0.75 else "#d64949"
+        draw.rectangle((76 + index * 210, row_y, 250 + index * 210, row_y + 64), fill=fill)
+        draw_text(draw, (96 + index * 210, row_y + 10), region.region, 22, "#343a42", bold=True)
+        draw_text(draw, (96 + index * 210, row_y + 34), f"{region.active} 台在线", 24, color, bold=True)
+
+    draw_text(draw, (116, 792), "BA Monitor Kirisame 测试版 · data via BATrace", 22, "#9ca3ad", bold=True)
+    draw_text(draw, (666, 792), f"更新时间：{format_iso_time(condition.timestamp)}", 20, "#a8afb8", bold=True)
+    return save(image, path or default_path("server", "condition"))
 
 
 def render_match_card(match: MatchSummary, path: Path | None = None) -> Path:
@@ -564,6 +604,21 @@ def draw_recent_metric_box(
     draw_text(draw, (x + 28, y + 22), label, 28, "#4e555e", bold=True)
     draw_text(draw, (x + 28, y + 66), value, 48, color, bold=True)
     draw_text(draw, (x + 28, y + 122), truncate(detail, 18), 21, "#6b737c", bold=True)
+
+
+def draw_server_metric_box(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    label: str,
+    value: str,
+    color: str,
+) -> None:
+    draw.rectangle((x, y, x + w, y + h), fill="#e8eaee")
+    draw_text(draw, (x + 24, y + 24), label, 26, "#4e555e", bold=True)
+    draw_text(draw, (x + 24, y + 66), value, 38, color, bold=True)
 
 
 def draw_rank_summary(
@@ -1083,6 +1138,23 @@ def format_time(epoch: int | None) -> str:
     if not epoch:
         return ""
     return datetime.fromtimestamp(epoch, timezone.utc).strftime("%m-%d %H:%M")
+
+
+def format_iso_time(value: str | None) -> str:
+    if not value:
+        return "N/A"
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M UTC")
+    except ValueError:
+        return value
+
+
+def server_health_label(ratio: float) -> str:
+    if ratio >= 0.95:
+        return "运行正常"
+    if ratio >= 0.75:
+        return "部分波动"
+    return "状态异常"
 
 
 def truncate(text: str, limit: int) -> str:
