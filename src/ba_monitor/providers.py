@@ -98,7 +98,7 @@ class MockGameDataProvider:
 
     async def get_recent_matches(self, steam_id: str, limit: int = 5) -> list[RecentMatch]:
         return [
-            RecentMatch(5545812 + i, 4, "胜利" if i % 2 == 0 else "失败", 12.5 - i, 1800 + i * 60, None)
+            RecentMatch(5545812 + i, 4, "win" if i % 2 == 0 else "loss", 12.5 - i, 1800 + i * 60, None)
             for i in range(limit)
         ]
 
@@ -276,11 +276,11 @@ def _recent_match_from_stb(match_id: int, commander_id: int, data: dict) -> Rece
     team_id = player.get("TeamId")
     winner_team = data.get("WinnerTeam")
     if winner_team is None:
-        result = "未知"
+        result = "unknown"
     elif team_id == winner_team:
-        result = "胜利"
+        result = "win"
     else:
-        result = "失败"
+        result = "loss"
 
     return RecentMatch(
         match_id=match_id,

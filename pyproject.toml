@@ -5,6 +5,7 @@ description = "Broken Arrow QQ data analysis bot"
 requires-python = ">=3.10"
 dependencies = [
   "qq-botpy>=1.2.1",
+  "pillow>=12.0.0",
   "pydantic-settings>=2.2.1",
 ]
 

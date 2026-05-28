@@ -105,7 +105,7 @@ def format_recent_matches(matches: list[RecentMatch]) -> str:
             sign = "+" if match.rating_delta >= 0 else ""
             delta = f"{sign}{match.rating_delta:.1f}"
         lines.append(
-            f"#{match.match_id} 地图{match.map_id or '?'} {match.result} ELO {delta} "
+            f"#{match.match_id} 地图{match.map_id or '?'} {format_result(match.result)} ELO {delta} "
             f"{_format_duration(match.duration_seconds)} {_format_time(match.ended_at)}"
         )
     return "\n".join(lines)
@@ -152,6 +152,14 @@ def _format_duration(seconds: int | None) -> str:
         return "时长未知"
     minutes, sec = divmod(seconds, 60)
     return f"{minutes}分{sec:02d}秒"
+
+
+def format_result(result: str) -> str:
+    return {
+        "win": "胜利",
+        "loss": "失败",
+        "unknown": "未知",
+    }.get(result, result or "未知")
 
 
 def _format_time(epoch: int | None) -> str:

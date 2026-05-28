@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     data_source: str = "barmory"
     ba_api_base_url: str | None = None
     ba_api_key: str | None = None
+    image_public_base_url: str | None = None
+    image_public_dir: str = "artifacts/public/cards"
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

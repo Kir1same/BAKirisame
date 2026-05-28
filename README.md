@@ -10,6 +10,7 @@
 - 命令解析和帮助文本。
 - 游戏数据 Provider 抽象，默认使用 BArmory STB 数据源，Mock 数据兜底。
 - 玩家摘要、近期对局、单场对局、环境摘要、单位摘要的第一版输出。
+- 玩家卡片、近期战绩卡片、单场战报卡片的 PNG 自动生成模板。
 - 单元测试。
 
 ## 数据源决策
@@ -70,6 +71,31 @@ python -m ba_monitor
 ```powershell
 pytest
 ```
+
+## 图片战报
+
+图片模板位于 `src/ba_monitor/cards.py`，当前支持：
+
+- `render_player_card`：玩家总览卡片。
+- `render_recent_card`：近期战绩卡片。
+- `render_match_card`：单场对局卡片。
+
+默认输出到 `artifacts/cards/`。QQ群和 C2C 图片发送需要先把本地 PNG 转成 QQ 可访问的媒体资源；下一步会增加临时图片托管或对象存储上传层，再把 `/me`、`/recent`、`/match` 改成优先返回图片。
+
+当前 `/me` 在群聊和 C2C 中会优先尝试发送图片卡片。开发期可以用本地静态目录加 Cloudflare Tunnel/ngrok：
+
+```powershell
+python -m http.server 8080 --directory artifacts/public
+```
+
+然后把公网转发地址写入 `.env`：
+
+```env
+IMAGE_PUBLIC_BASE_URL=https://你的公网域名/cards
+IMAGE_PUBLIC_DIR=artifacts/public/cards
+```
+
+机器人生成的 PNG 会复制到 `IMAGE_PUBLIC_DIR`，并拼成 `IMAGE_PUBLIC_BASE_URL/文件名` 提交给 QQ 的 media 接口。如果没有配置公网地址，机器人会自动退回文字回复。
 
 ## 数据 API 替换点
 
