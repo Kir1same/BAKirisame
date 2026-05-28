@@ -61,7 +61,7 @@ def render_player_card(
         draw_model_note_panel(draw, 48, 970)
     draw_pr_distribution(draw, 48, 1310, rating)
 
-    draw_text(draw, (116, 1528), "Powered by BA Monitor Kirisame · data via BArmory STB", 24, "#9ca3ad", bold=True)
+    draw_text(draw, (116, 1528), "BA Monitor Kirisame 测试版 · data via BArmory STB", 24, "#9ca3ad", bold=True)
     note = "中部与辅助数据来自近期有效对局样本" if analysis else "近期有效对局暂不可用，已回退到基础战绩"
     draw_text(draw, (330 if analysis else 280, 1562), note, 22, "#a8afb8", bold=True)
     return save(image, path or default_path("player", stats.steam_id))
@@ -141,7 +141,7 @@ def render_recent_card(
             cursor += width
         row_y += 52
 
-    draw_text(draw, (116, height - 72), "Powered by BA Monitor Kirisame · data via BArmory STB", 24, "#9ca3ad", bold=True)
+    draw_text(draw, (116, height - 72), "BA Monitor Kirisame 测试版 · data via BArmory STB", 24, "#9ca3ad", bold=True)
     draw_text(draw, (356, height - 40), "近期PR只基于本次查询范围内的有效对局", 22, "#a8afb8", bold=True)
     return save(image, path or default_path("recent", player.steam_id))
 
@@ -712,7 +712,7 @@ def draw_pr_distribution(draw: ImageDraw.ImageDraw, x: int, y: int, rating: Play
 
 
 def footer(draw: ImageDraw.ImageDraw) -> None:
-    draw_text(draw, (64, 660), "BA Monitor Kirisame · data via BArmory STB", 20, MUTED)
+    draw_text(draw, (64, 660), "BA Monitor Kirisame 测试版 · data via BArmory STB", 20, MUTED)
     draw_text(draw, (920, 660), datetime.now().strftime("%Y-%m-%d %H:%M"), 20, MUTED)
 
 
