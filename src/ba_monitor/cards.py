@@ -8,7 +8,15 @@ from PIL import Image, ImageDraw, ImageFont
 
 from ba_monitor.maps import format_map_name
 from ba_monitor.pr import PlayerRating, calculate_player_rating
-from ba_monitor.providers import CategoryPreference, MatchSummary, PlayerAnalysis, PlayerStats, RecentMatch
+from ba_monitor.providers import (
+    CategoryPreference,
+    DistributionBucket,
+    MatchSummary,
+    PlayerAnalysis,
+    PlayerDistribution,
+    PlayerStats,
+    RecentMatch,
+)
 
 CARD_DIR = Path("artifacts/cards")
 WIDTH = 1200
@@ -144,6 +152,42 @@ def render_recent_card(
     draw_text(draw, (116, height - 72), "BA Monitor Kirisame 测试版 · data via BArmory STB", 24, "#9ca3ad", bold=True)
     draw_text(draw, (356, height - 40), "近期PR只基于本次查询范围内的有效对局", 22, "#a8afb8", bold=True)
     return save(image, path or default_path("recent", player.steam_id))
+
+
+def render_rank_card(
+    player: PlayerStats,
+    distribution: PlayerDistribution,
+    path: Path | None = None,
+) -> Path:
+    image, draw = new_light_canvas(1180)
+    total = distribution.total_players or player.ranked_total
+    percentile = rank_percentile(player.rank, total)
+    player_bucket = rating_bucket(player.rating, distribution.rating)
+    bucket_count = next((item.count for item in distribution.rating if item.bucket == player_bucket), 0)
+    rank_color = rank_tier_color(player.rank, total)
+    elo_color = elo_tier_color(player.rating)
+
+    draw.rectangle((48, 64, 1152, 274), fill="#eef1f5")
+    draw.rectangle((64, 84, 72, 254), fill="#9aa1aa")
+    draw_text(draw, (92, 92), truncate(player.name, 22), 54, "#11151a", bold=True)
+    draw_text(draw, (96, 154), f"STEAM -- {player.steam_id}", 24, "#7a828d", bold=True)
+    draw_text(draw, (96, 206), f"等级：{player.level + 1}    全服排名：{format_rank_with_percent(player.rank, total)}", 26, "#373d45", bold=True)
+    draw_text(draw, (620, 104), "BA Monitor Kirisame", 28, "#5fb4ff", bold=True)
+    draw_text(draw, (620, 150), "BROKEN ARROW RANK REPORT", 22, "#6f7782")
+
+    draw.rectangle((48, 306, 1152, 384), fill=rank_color)
+    draw_text(draw, (74, 321), "全服位置", 42, "#ffffff", bold=True)
+    draw_text(draw, (330, 340), f"总玩家数：{(total or 0):,}", 22, "#ffffff", bold=True)
+    draw_text(draw, (872, 324), f"排名 {format_rank(player.rank)}", 38, "#ffffff", bold=True)
+
+    draw_light_section_header(draw, 48, 408, 1104, "排名评估")
+    draw_rank_summary(draw, 48, 486, player, total, percentile, player_bucket, bucket_count, elo_color, rank_color)
+    draw_light_section_header(draw, 48, 730, 1104, "全服 ELO 分布")
+    draw_rank_distribution(draw, 96, 820, 1010, 230, distribution.rating, player.rating)
+
+    draw_text(draw, (116, 1118), "BA Monitor Kirisame 测试版 · data via BArmory STB / BATrace", 22, "#9ca3ad", bold=True)
+    draw_text(draw, (376, 1150), "分布统计来自 BATrace 全服样本，橙色柱表示当前 ELO 区间", 20, "#a8afb8", bold=True)
+    return save(image, path or default_path("rank", player.steam_id))
 
 
 def render_match_card(match: MatchSummary, path: Path | None = None) -> Path:
@@ -522,6 +566,86 @@ def draw_recent_metric_box(
     draw_text(draw, (x + 28, y + 122), truncate(detail, 18), 21, "#6b737c", bold=True)
 
 
+def draw_rank_summary(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    player: PlayerStats,
+    total: int | None,
+    percentile: float | None,
+    player_bucket: float | None,
+    bucket_count: int,
+    elo_color: str,
+    rank_color: str,
+) -> None:
+    draw.rectangle((x + 28, y, x + 1076, y + 178), fill="#e8eaee")
+    items = [
+        ("当前评分", f"{player.rating:,}", elo_color),
+        ("全服排名", format_rank(player.rank), rank_color),
+        ("位置", rank_percent_text(player.rank, total), rank_color),
+        ("所在区间", format_rating_bucket(player_bucket), "#ff7a1a"),
+    ]
+    for index, (label, value, color) in enumerate(items):
+        box_x = x + 56 + index * 256
+        draw.rectangle((box_x, y + 24, box_x + 220, y + 126), fill="#f0f2f5")
+        draw_text(draw, (box_x + 22, y + 40), label, 22, "#4e555e", bold=True)
+        draw_text(draw, (box_x + 22, y + 72), value, 35, color, bold=True)
+    detail = f"该 ELO 区间玩家约 {bucket_count:,} 人"
+    if percentile is not None:
+        detail += f"；超过约 {(1 - percentile):.1%} 的有排名玩家"
+    draw_text(draw, (x + 68, y + 142), detail, 22, "#555d67", bold=True)
+
+
+def draw_rank_distribution(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    buckets: list[DistributionBucket],
+    rating: int,
+) -> None:
+    if not buckets:
+        draw_text(draw, (x + 320, y + 86), "暂无全服分布数据", 32, "#6b737c", bold=True)
+        return
+    max_count = max(item.count for item in buckets) or 1
+    chart_h = h - 70
+    chart_y = y
+    chart_bottom = chart_y + chart_h
+    draw.rectangle((x - 20, y - 18, x + w + 20, y + h + 12), fill="#e8eaee")
+    draw.line((x, chart_bottom, x + w, chart_bottom), fill="#b8bdc4", width=2)
+    for step in range(1, 5):
+        gy = chart_bottom - int(chart_h * step / 5)
+        draw.line((x, gy, x + w, gy), fill="#d4d8dd", width=1)
+        label = f"{round(max_count * step / 5):,}"
+        draw_text(draw, (x - 70, gy - 10), label, 16, "#6b737c")
+
+    bar_gap = 4
+    bar_w = max(5, int((w - bar_gap * (len(buckets) - 1)) / len(buckets)))
+    player_bucket = rating_bucket(rating, buckets)
+    cursor = x
+    for item in buckets:
+        bar_h = max(2, int(chart_h * item.count / max_count))
+        color = "#ff7a1a" if item.bucket == player_bucket else "#30acc4"
+        draw.rounded_rectangle(
+            (cursor, chart_bottom - bar_h, cursor + bar_w, chart_bottom),
+            radius=3,
+            fill=color,
+        )
+        if int(item.bucket) % 300 == 0:
+            draw_text(draw, (cursor - 8, chart_bottom + 14), str(int(item.bucket)), 15, "#6b737c")
+        cursor += bar_w + bar_gap
+
+    if player_bucket is not None:
+        index = next((i for i, item in enumerate(buckets) if item.bucket == player_bucket), 0)
+        marker_x = x + index * (bar_w + bar_gap) + bar_w // 2
+        draw.polygon(
+            [(marker_x, chart_bottom + 36), (marker_x - 12, chart_bottom + 56), (marker_x + 12, chart_bottom + 56)],
+            fill="#ff7a1a",
+        )
+        draw_text(draw, (max(x, marker_x - 70), chart_bottom + 60), "你的位置", 22, "#ff7a1a", bold=True)
+
+
 def sort_recent_matches(matches: list[RecentMatch]) -> list[RecentMatch]:
     return sorted(matches, key=lambda item: (item.ended_at is None, item.ended_at or 0))
 
@@ -774,6 +898,27 @@ def format_rank_with_percent(rank: int | None, total: int | None) -> str:
     if rank is None or rank < 0:
         return "N/A"
     return f"#{rank}（{rank_percent_text(rank, total)}）"
+
+
+def rating_bucket(rating: int, buckets: list[DistributionBucket]) -> float | None:
+    if not buckets:
+        return None
+    ordered = sorted(buckets, key=lambda item: item.bucket)
+    candidate = ordered[0].bucket
+    for item in ordered:
+        if rating >= item.bucket:
+            candidate = item.bucket
+        else:
+            break
+    return candidate
+
+
+def format_rating_bucket(bucket: float | None) -> str:
+    if bucket is None:
+        return "N/A"
+    if bucket == 0:
+        return "0+"
+    return f"{bucket:,.0f}+"
 
 
 def rank_percent_text(rank: int | None, total: int | None) -> str:

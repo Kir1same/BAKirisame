@@ -42,6 +42,9 @@ async def _handle_command(
     if command.type == CommandType.PLAYER:
         steam_id = command.argument.strip() or require_bound_steam_id(context, bindings)
         return format_player(await provider.get_player(steam_id))
+    if command.type == CommandType.RANK:
+        steam_id = command.argument.strip() or require_bound_steam_id(context, bindings)
+        return format_rank_position(await provider.get_player(steam_id))
     if command.type == CommandType.RECENT:
         steam_id, days = parse_recent_argument(command.argument, context, bindings)
         return format_recent_matches(await provider.get_recent_matches(steam_id, days=days), days)
@@ -91,6 +94,21 @@ def format_player(stats: PlayerStats) -> str:
             f"ELO：{stats.rating}，排名：{rank}，等级：{stats.level + 1}",
             f"排位：{stats.matches} 场，胜率：{stats.win_rate:.1%}，K/D：{stats.kd_ratio:.3f}",
             f"掉线/退局：{stats.leaves} 次（{leave_rate:.1%}）",
+        ]
+    )
+
+
+def format_rank_position(stats: PlayerStats) -> str:
+    rank = f"#{stats.rank}" if stats.rank is not None and stats.rank >= 0 else "未上榜"
+    total = stats.ranked_total or 0
+    percent = stats.rank / total if stats.rank is not None and stats.rank >= 0 and total else None
+    percent_text = f"前{percent:.1%}" if percent is not None else "百分位未知"
+    return "\n".join(
+        [
+            f"玩家：{stats.name}",
+            f"ELO：{stats.rating}",
+            f"全服排名：{rank}（{percent_text}）",
+            f"总玩家数：{total:,}" if total else "总玩家数：暂不可用",
         ]
     )
 

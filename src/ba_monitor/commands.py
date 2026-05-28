@@ -8,6 +8,7 @@ class CommandType(str, Enum):
     UNBIND = "unbind"
     ME = "me"
     PLAYER = "player"
+    RANK = "rank"
     RECENT = "recent"
     MATCH = "match"
     META = "meta"
@@ -33,6 +34,8 @@ ALIASES = {
     "我": CommandType.ME,
     "player": CommandType.PLAYER,
     "玩家": CommandType.PLAYER,
+    "rank": CommandType.RANK,
+    "排名": CommandType.RANK,
     "recent": CommandType.RECENT,
     "近期": CommandType.RECENT,
     "近期战绩": CommandType.RECENT,

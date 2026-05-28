@@ -20,6 +20,13 @@ def test_parse_chinese_alias() -> None:
     assert command.argument == "76561198157609957"
 
 
+def test_parse_rank_command() -> None:
+    command = parse_command("/rank 76561198157609957")
+
+    assert command.type == CommandType.RANK
+    assert command.argument == "76561198157609957"
+
+
 def test_parse_recent_command() -> None:
     command = parse_command("<@12345> /近期战绩")
 

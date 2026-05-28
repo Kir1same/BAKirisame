@@ -45,6 +45,19 @@ class RecentMatch:
 
 
 @dataclass(frozen=True)
+class DistributionBucket:
+    bucket: float
+    count: int
+
+
+@dataclass(frozen=True)
+class PlayerDistribution:
+    rating: list[DistributionBucket]
+    kd: list[DistributionBucket]
+    total_players: int | None
+
+
+@dataclass(frozen=True)
 class MatchSummary:
     match_id: int
     map_id: int | None
@@ -122,6 +135,9 @@ class GameDataProvider(Protocol):
     async def get_player_analysis(self, steam_id: str) -> PlayerAnalysis | None:
         ...
 
+    async def get_player_distribution(self) -> PlayerDistribution:
+        ...
+
     async def get_match(self, match_id: str) -> MatchSummary:
         ...
 
@@ -193,6 +209,20 @@ class MockGameDataProvider:
             recent_avg_objectives=3.4,
             recent_avg_net_score=860.0,
             recent_rating_delta=38.0,
+        )
+
+    async def get_player_distribution(self) -> PlayerDistribution:
+        rating = [
+            DistributionBucket(bucket, max(1, round(24000 * (1 - index / 65) ** 2)))
+            for index, bucket in enumerate(range(250, 3500, 50))
+        ]
+        return PlayerDistribution(
+            rating=rating,
+            kd=[
+                DistributionBucket(0.1 * index, max(1, round(26000 * (1 - index / 32) ** 2)))
+                for index in range(31)
+            ],
+            total_players=sum(item.count for item in rating),
         )
 
     async def get_match(self, match_id: str) -> MatchSummary:
@@ -301,6 +331,18 @@ class BarmoryStbProvider:
         except Exception:
             return None
         return _player_analysis_from_batrace(payload)
+
+    async def get_player_distribution(self) -> PlayerDistribution:
+        try:
+            payload = await asyncio.to_thread(
+                _request_json,
+                "GET",
+                "https://dash.batrace.top/api/players/distribution?metric=rating",
+                _plain_headers(),
+            )
+        except Exception as exc:
+            raise RuntimeError("无法获取全服分布数据") from exc
+        return _player_distribution_from_batrace(payload if isinstance(payload, dict) else {})
 
     async def get_match(self, match_id: str) -> MatchSummary:
         numeric_id = int(match_id.strip())
@@ -531,6 +573,29 @@ def _player_analysis_from_batrace(data: dict) -> PlayerAnalysis:
         recent_avg_net_score=_recent_avg_net_score(trend_points),
         recent_rating_delta=_recent_rating_delta(trend_points),
     )
+
+
+def _player_distribution_from_batrace(data: dict) -> PlayerDistribution:
+    return PlayerDistribution(
+        rating=_distribution_buckets(data.get("rating")),
+        kd=_distribution_buckets(data.get("kd")),
+        total_players=_optional_int(data.get("totalPlayers")),
+    )
+
+
+def _distribution_buckets(items: object) -> list[DistributionBucket]:
+    if not isinstance(items, list):
+        return []
+    buckets: list[DistributionBucket] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        bucket = _optional_float(item.get("bucket"))
+        count = _optional_int(item.get("count"))
+        if bucket is None or count is None:
+            continue
+        buckets.append(DistributionBucket(bucket, count))
+    return buckets
 
 
 def _category_name(key: str) -> str:

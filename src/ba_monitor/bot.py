@@ -10,9 +10,9 @@ from typing import Any
 import botpy
 from botpy.message import C2CMessage, GroupMessage, Message
 
-from ba_monitor.analysis import handle_command, parse_recent_argument
-from ba_monitor.bindings import BindingStore, UserContext
-from ba_monitor.cards import render_player_card, render_recent_card
+from ba_monitor.analysis import handle_command, parse_recent_argument, require_bound_steam_id
+from ba_monitor.bindings import BindingStore, UserContext, normalize_steam_id
+from ba_monitor.cards import render_player_card, render_rank_card, render_recent_card
 from ba_monitor.commands import CommandType, parse_command
 from ba_monitor.config import get_settings
 from ba_monitor.image_host import ImageHost, build_image_host
@@ -86,13 +86,13 @@ class BrokenArrowBot(botpy.Client):
         command = parse_command(message.content)
         if command.type == CommandType.RECENT:
             return await self._reply_group_recent_card(message)
-        if command.type != CommandType.ME:
+        if command.type == CommandType.RANK:
+            return await self._reply_group_rank_card(message)
+        if command.type not in (CommandType.ME, CommandType.PLAYER):
             return False
         context = build_user_context(message)
-        steam_id = self.bindings.get_steam_id(context.user_key)
-        if not steam_id:
-            return False
         try:
+            steam_id = parse_player_card_steam_id(command, context, self.bindings)
             stats = await self.provider.get_player(steam_id)
             analysis = await self._get_player_analysis(steam_id)
             image_url = await self.image_host.upload(render_player_card(stats, analysis=analysis))
@@ -109,6 +109,8 @@ class BrokenArrowBot(botpy.Client):
                 media=media,
             )
             return True
+        except ValueError:
+            return False
         except Exception:
             LOGGER.exception("failed to send group player card")
             return False
@@ -117,13 +119,13 @@ class BrokenArrowBot(botpy.Client):
         command = parse_command(message.content)
         if command.type == CommandType.RECENT:
             return await self._reply_c2c_recent_card(message)
-        if command.type != CommandType.ME:
+        if command.type == CommandType.RANK:
+            return await self._reply_c2c_rank_card(message)
+        if command.type not in (CommandType.ME, CommandType.PLAYER):
             return False
         context = build_user_context(message)
-        steam_id = self.bindings.get_steam_id(context.user_key)
-        if not steam_id:
-            return False
         try:
+            steam_id = parse_player_card_steam_id(command, context, self.bindings)
             stats = await self.provider.get_player(steam_id)
             analysis = await self._get_player_analysis(steam_id)
             image_url = await self.image_host.upload(render_player_card(stats, analysis=analysis))
@@ -140,8 +142,64 @@ class BrokenArrowBot(botpy.Client):
                 media=media,
             )
             return True
+        except ValueError:
+            return False
         except Exception:
             LOGGER.exception("failed to send c2c player card")
+            return False
+
+    async def _reply_group_rank_card(self, message: GroupMessage) -> bool:
+        command = parse_command(message.content)
+        context = build_user_context(message)
+        try:
+            steam_id = parse_optional_player_steam_id(command, context, self.bindings)
+            player = await self.provider.get_player(steam_id)
+            distribution = await self.provider.get_player_distribution()
+            image_url = await self.image_host.upload(render_rank_card(player, distribution))
+            media = await message._api.post_group_file(
+                group_openid=message.group_openid,
+                file_type=1,
+                url=image_url,
+            )
+            log_bot_reply("group", message, f"[image] {image_url}")
+            await message._api.post_group_message(
+                group_openid=message.group_openid,
+                msg_type=7,
+                msg_id=message.id,
+                media=media,
+            )
+            return True
+        except ValueError:
+            return False
+        except Exception:
+            LOGGER.exception("failed to send group rank card")
+            return False
+
+    async def _reply_c2c_rank_card(self, message: C2CMessage) -> bool:
+        command = parse_command(message.content)
+        context = build_user_context(message)
+        try:
+            steam_id = parse_optional_player_steam_id(command, context, self.bindings)
+            player = await self.provider.get_player(steam_id)
+            distribution = await self.provider.get_player_distribution()
+            image_url = await self.image_host.upload(render_rank_card(player, distribution))
+            media = await message._api.post_c2c_file(
+                openid=message.author.user_openid,
+                file_type=1,
+                url=image_url,
+            )
+            log_bot_reply("c2c", message, f"[image] {image_url}")
+            await message._api.post_c2c_message(
+                openid=message.author.user_openid,
+                msg_type=7,
+                msg_id=message.id,
+                media=media,
+            )
+            return True
+        except ValueError:
+            return False
+        except Exception:
+            LOGGER.exception("failed to send c2c rank card")
             return False
 
     async def _get_player_analysis(self, steam_id: str):
@@ -309,6 +367,18 @@ def build_user_context(message: Any) -> UserContext:
         or getattr(author, "id", None)
     )
     return UserContext(user_key=str(user_key)) if user_key else UserContext()
+
+
+def parse_player_card_steam_id(command, context: UserContext, bindings: BindingStore) -> str:
+    if command.type == CommandType.PLAYER and command.argument.strip():
+        return normalize_steam_id(command.argument)
+    return require_bound_steam_id(context, bindings)
+
+
+def parse_optional_player_steam_id(command, context: UserContext, bindings: BindingStore) -> str:
+    if command.argument.strip():
+        return normalize_steam_id(command.argument)
+    return require_bound_steam_id(context, bindings)
 
 
 def start_log_pruner() -> None:

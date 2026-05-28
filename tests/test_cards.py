@@ -1,9 +1,19 @@
-from ba_monitor.cards import rank_percent_text, rank_tier_color, render_match_card, render_player_card, render_recent_card, sort_recent_matches
+from ba_monitor.cards import (
+    rank_percent_text,
+    rank_tier_color,
+    render_match_card,
+    render_player_card,
+    render_rank_card,
+    render_recent_card,
+    sort_recent_matches,
+)
 from ba_monitor.providers import (
     CategoryPreference,
+    DistributionBucket,
     HighlightUnit,
     MatchSummary,
     PlayerAnalysis,
+    PlayerDistribution,
     PlayerStats,
     PlayStyleAxis,
     RecentMatch,
@@ -93,6 +103,20 @@ def test_render_recent_card_uses_map_fallback_label(tmp_path) -> None:
         tmp_path / "recent-map.png",
         days=7,
     )
+
+    assert path.exists()
+    assert path.stat().st_size > 10_000
+
+
+def test_render_rank_card(tmp_path) -> None:
+    player = PlayerStats("Kirisame", "76561198157609957", 2192, 8774, 0.536, 1.307, 328, 25, 49, ranked_total=271_732)
+    distribution = PlayerDistribution(
+        rating=[DistributionBucket(bucket, max(1, 24000 - index * 350)) for index, bucket in enumerate(range(250, 3500, 50))],
+        kd=[],
+        total_players=271_732,
+    )
+
+    path = render_rank_card(player, distribution, tmp_path / "rank.png")
 
     assert path.exists()
     assert path.stat().st_size > 10_000
