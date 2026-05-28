@@ -73,11 +73,13 @@ def help_text() -> str:
         [
             "BA Monitor Kirisame",
             "当前为测试版，仅列出已稳定指令：",
-            "/bind <SteamID64> - 绑定自己的断箭账号",
+            "/bind <SteamID64|玩家ID|玩家名> - 绑定自己的断箭账号",
             "/unbind - 解除绑定",
             "/me - 查询已绑定账号的个人数据卡片",
+            "/player <SteamID64|玩家ID|玩家名> - 查询其他玩家数据卡片",
+            "/rank - 查询已绑定账号的全服排名位置",
+            "/rank <SteamID64|玩家ID|玩家名> - 查询其他玩家全服排名位置",
             "/recent - 查询已绑定账号最近 1 天战绩",
             "/recent <天数> - 查询最近 N 天战绩，支持 1-30 天",
-            "下一阶段：/player <SteamID64> 查询其他玩家",
         ]
     )

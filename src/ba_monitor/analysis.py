@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from ba_monitor.bindings import BindingStore, UserContext, normalize_steam_id
+from ba_monitor.bindings import BindingStore, UserContext
 from ba_monitor.commands import Command, CommandType, help_text
 from ba_monitor.providers import (
     GameDataProvider,
@@ -33,7 +33,7 @@ async def _handle_command(
     if command.type == CommandType.HELP:
         return help_text()
     if command.type == CommandType.BIND:
-        return handle_bind(command.argument, context, bindings)
+        return await handle_bind(command.argument, context, bindings, provider)
     if command.type == CommandType.UNBIND:
         return handle_unbind(context, bindings)
     if command.type == CommandType.ME:
@@ -61,12 +61,15 @@ async def _handle_command(
     return "我还不认识这个指令。发送 /help 查看可用指令。"
 
 
-def handle_bind(argument: str, context: UserContext, bindings: BindingStore) -> str:
+async def handle_bind(argument: str, context: UserContext, bindings: BindingStore, provider: GameDataProvider) -> str:
     if not context.user_key:
         return "当前 QQ 场景没有可用用户标识，暂时不能绑定。"
-    steam_id = normalize_steam_id(argument)
+    if not argument.strip():
+        return "请提供 SteamID64、玩家 ID 或玩家名，例如：/bind 山雾谷雨"
+    stats = await provider.get_player(argument.strip())
+    steam_id = stats.steam_id
     bindings.bind(context.user_key, steam_id)
-    return f"绑定成功。以后发送 /me 或 /recent 就会默认查询 SteamID：{steam_id}"
+    return f"绑定成功：{stats.name}（SteamID：{steam_id}）。以后发送 /me、/recent、/rank 会默认查询这个账号。"
 
 
 def handle_unbind(context: UserContext, bindings: BindingStore) -> str:

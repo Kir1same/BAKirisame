@@ -266,7 +266,7 @@ class BarmoryStbProvider:
         self._leaderboard_total_loaded = False
 
     async def get_player(self, query: str) -> PlayerStats:
-        steam_id = _require_steam_id(query)
+        steam_id = await self._resolve_steam_id(query)
         profile = await self._get_stb(f"/stb/commander/{steam_id}/steam", cache_key="day")
         stats = await self._get_stb(f"/stb/commander/{steam_id}/stats", cache_key="day")
         rating_stats = stats.get("statisticByLobbyType", {}).get("Rating", {})
@@ -293,7 +293,7 @@ class BarmoryStbProvider:
         )
 
     async def get_recent_matches(self, steam_id: str, days: int = 1, limit: int = 20) -> list[RecentMatch]:
-        steam_id = _require_steam_id(steam_id)
+        steam_id = await self._resolve_steam_id(steam_id)
         days = max(1, min(days, 30))
         limit = max(1, min(limit, 100))
         profile = await self._get_stb(f"/stb/commander/{steam_id}/steam", cache_key="day")
@@ -318,7 +318,7 @@ class BarmoryStbProvider:
         return summaries
 
     async def get_player_analysis(self, steam_id: str) -> PlayerAnalysis | None:
-        steam_id = _require_steam_id(steam_id)
+        steam_id = await self._resolve_steam_id(steam_id)
         profile = await self._get_stb(f"/stb/commander/{steam_id}/steam", cache_key="day")
         commander_id = profile["id"]
         try:
@@ -354,6 +354,49 @@ class BarmoryStbProvider:
 
     async def get_meta(self) -> MetaSnapshot:
         return await MockGameDataProvider().get_meta()
+
+    async def _resolve_steam_id(self, query: str) -> str:
+        cleaned = query.strip()
+        if cleaned.isdigit() and len(cleaned) >= 16:
+            return cleaned
+        if cleaned.isdigit():
+            payload = await asyncio.to_thread(
+                _request_json,
+                "GET",
+                f"https://dash.batrace.top/api/players/info?stbid={urllib.parse.quote(cleaned)}",
+                _plain_headers(),
+            )
+            info = payload.get("info") if isinstance(payload, dict) else None
+            if isinstance(info, dict):
+                steam_id = str(info.get("steamId") or info.get("steam_id") or "")
+                if steam_id.isdigit() and len(steam_id) >= 16:
+                    return steam_id
+            raise ValueError(f"没有找到 ID 为 {cleaned} 的玩家。")
+
+        if not cleaned:
+            raise ValueError("请输入 SteamID64、玩家 ID 或玩家名。")
+        payload = await asyncio.to_thread(
+            _request_json,
+            "GET",
+            f"https://dash.batrace.top/api/players/search?q={urllib.parse.quote(cleaned)}&limit=5",
+            _plain_headers(),
+        )
+        players = payload.get("players") if isinstance(payload, dict) else None
+        if not isinstance(players, list) or not players:
+            raise ValueError(f"没有搜索到玩家：{cleaned}")
+        exact = next(
+            (
+                player
+                for player in players
+                if isinstance(player, dict) and str(player.get("name") or "").casefold() == cleaned.casefold()
+            ),
+            None,
+        )
+        player = exact or next((player for player in players if isinstance(player, dict)), None)
+        steam_id = str((player or {}).get("steam_id") or (player or {}).get("steamId") or "")
+        if steam_id.isdigit() and len(steam_id) >= 16:
+            return steam_id
+        raise ValueError(f"搜索到了玩家 {cleaned}，但没有可用 SteamID。")
 
     async def _get_stb(self, path: str, cache_key: str | None) -> object:
         token = await self._get_attest_token()

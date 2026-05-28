@@ -11,7 +11,7 @@ import botpy
 from botpy.message import C2CMessage, GroupMessage, Message
 
 from ba_monitor.analysis import handle_command, parse_recent_argument, require_bound_steam_id
-from ba_monitor.bindings import BindingStore, UserContext, normalize_steam_id
+from ba_monitor.bindings import BindingStore, UserContext
 from ba_monitor.cards import render_player_card, render_rank_card, render_recent_card
 from ba_monitor.commands import CommandType, parse_command
 from ba_monitor.config import get_settings
@@ -371,13 +371,13 @@ def build_user_context(message: Any) -> UserContext:
 
 def parse_player_card_steam_id(command, context: UserContext, bindings: BindingStore) -> str:
     if command.type == CommandType.PLAYER and command.argument.strip():
-        return normalize_steam_id(command.argument)
+        return command.argument.strip()
     return require_bound_steam_id(context, bindings)
 
 
 def parse_optional_player_steam_id(command, context: UserContext, bindings: BindingStore) -> str:
     if command.argument.strip():
-        return normalize_steam_id(command.argument)
+        return command.argument.strip()
     return require_bound_steam_id(context, bindings)
 
 
