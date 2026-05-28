@@ -22,6 +22,10 @@ class PlayerStats:
     matches: int
     leaves: int
     level: int
+    kills: int = 0
+    deaths: int = 0
+    total_match_time_seconds: int = 0
+    ranked_total: int | None = None
     updated_at: str | None = None
 
 
@@ -48,6 +52,45 @@ class MatchSummary:
 
 
 @dataclass(frozen=True)
+class CategoryPreference:
+    key: str
+    name: str
+    total_cost: int
+    percentage: float
+
+
+@dataclass(frozen=True)
+class HighlightUnit:
+    unit_id: int
+    name: str
+    category: str
+    spawn_count: int
+    total_damage: float
+    total_cost: int
+    avg_roi: float
+
+
+@dataclass(frozen=True)
+class PlayStyleAxis:
+    key: str
+    value: float
+    label: str
+
+
+@dataclass(frozen=True)
+class PlayerAnalysis:
+    match_count: int
+    category_preferences: list[CategoryPreference]
+    highlight_units: list[HighlightUnit]
+    play_style_axes: list[PlayStyleAxis]
+    primary_style: str
+    recent_win_rate: float | None = None
+    recent_avg_objectives: float | None = None
+    recent_avg_net_score: float | None = None
+    recent_rating_delta: float | None = None
+
+
+@dataclass(frozen=True)
 class UnitStats:
     name: str
     pick_rate: float
@@ -68,7 +111,10 @@ class GameDataProvider(Protocol):
     async def get_player(self, query: str) -> PlayerStats:
         ...
 
-    async def get_recent_matches(self, steam_id: str, limit: int = 5) -> list[RecentMatch]:
+    async def get_recent_matches(self, steam_id: str, days: int = 1, limit: int = 20) -> list[RecentMatch]:
+        ...
+
+    async def get_player_analysis(self, steam_id: str) -> PlayerAnalysis | None:
         ...
 
     async def get_match(self, match_id: str) -> MatchSummary:
@@ -93,14 +139,44 @@ class MockGameDataProvider:
             matches=238,
             leaves=3,
             level=42,
+            kills=280,
+            deaths=237,
+            total_match_time_seconds=238 * 2100,
+            ranked_total=200_000,
             updated_at="mock",
         )
 
-    async def get_recent_matches(self, steam_id: str, limit: int = 5) -> list[RecentMatch]:
+    async def get_recent_matches(self, steam_id: str, days: int = 1, limit: int = 20) -> list[RecentMatch]:
         return [
             RecentMatch(5545812 + i, 4, "win" if i % 2 == 0 else "loss", 12.5 - i, 1800 + i * 60, None)
-            for i in range(limit)
+            for i in range(min(limit, max(1, days) * 4))
         ]
+
+    async def get_player_analysis(self, steam_id: str) -> PlayerAnalysis | None:
+        return PlayerAnalysis(
+            match_count=50,
+            category_preferences=[
+                CategoryPreference("vehicles", "载具", 76000, 24.0),
+                CategoryPreference("support", "支援", 66000, 21.0),
+                CategoryPreference("infantry", "步兵", 52000, 16.5),
+                CategoryPreference("aircrafts", "战机", 46000, 14.5),
+            ],
+            highlight_units=[
+                HighlightUnit(63, "Assaultmen SMAW", "步兵", 59, 2657.0, 4130, 0.64),
+                HighlightUnit(11, "M142 HIMARS", "支援", 18, 4200.0, 3600, 1.17),
+                HighlightUnit(8, "AH-64D Longbow", "直升机", 12, 3100.0, 1320, 2.35),
+            ],
+            play_style_axes=[
+                PlayStyleAxis("aggression", 65, "aggressive"),
+                PlayStyleAxis("economy", 79, "efficient"),
+                PlayStyleAxis("teamplay", 88, "team_player"),
+            ],
+            primary_style="team_player",
+            recent_win_rate=0.56,
+            recent_avg_objectives=3.4,
+            recent_avg_net_score=860.0,
+            recent_rating_delta=38.0,
+        )
 
     async def get_match(self, match_id: str) -> MatchSummary:
         return MatchSummary(
@@ -138,6 +214,9 @@ class BarmoryStbProvider:
         self.client_id = client_id or str(uuid.uuid4())
         self._attest_token: str | None = None
         self._attest_expires_at = 0
+        self._batrace_base_url = "https://app.batrace.top"
+        self._leaderboard_total: int | None = None
+        self._leaderboard_total_loaded = False
 
     async def get_player(self, query: str) -> PlayerStats:
         steam_id = _require_steam_id(query)
@@ -146,6 +225,8 @@ class BarmoryStbProvider:
         rating_stats = stats.get("statisticByLobbyType", {}).get("Rating", {})
         matches = int(rating_stats.get("fightsCount") or 0)
         wins = int(rating_stats.get("winsCount") or 0)
+        kills = int(rating_stats.get("killsCount") or 0)
+        deaths = int(rating_stats.get("deathsCount") or 0)
 
         return PlayerStats(
             name=profile.get("name") or stats.get("name") or steam_id,
@@ -157,19 +238,52 @@ class BarmoryStbProvider:
             matches=matches,
             leaves=int(rating_stats.get("leavesCount") or 0),
             level=int(profile.get("lvl") or stats.get("level") or 0),
+            kills=kills,
+            deaths=deaths,
+            total_match_time_seconds=int(rating_stats.get("totalMatchTimeSec") or 0),
+            ranked_total=await self._get_leaderboard_total(),
             updated_at=stats.get("updateDate"),
         )
 
-    async def get_recent_matches(self, steam_id: str, limit: int = 5) -> list[RecentMatch]:
+    async def get_recent_matches(self, steam_id: str, days: int = 1, limit: int = 20) -> list[RecentMatch]:
         steam_id = _require_steam_id(steam_id)
+        days = max(1, min(days, 30))
+        limit = max(1, min(limit, 100))
         profile = await self._get_stb(f"/stb/commander/{steam_id}/steam", cache_key="day")
         commander_id = profile["id"]
         match_ids = await self._get_stb(f"/stb/commander/{commander_id}/matches", cache_key="hour")
         summaries: list[RecentMatch] = []
-        for match_id in match_ids[:limit]:
-            match_data = await self._get_stb(f"/stb/match/{match_id}", cache_key=None)
-            summaries.append(_recent_match_from_stb(int(match_id), int(commander_id), match_data))
+        cutoff = int(time.time()) - days * 24 * 60 * 60
+        scan_limit = min(len(match_ids), max(limit * 4, days * 24))
+        for match_id in match_ids[:scan_limit]:
+            try:
+                match_data = await self._get_stb(f"/stb/match/{match_id}", cache_key=None)
+            except RuntimeError as exc:
+                if "BArmory request failed: 404" in str(exc):
+                    continue
+                raise
+            summary = _recent_match_from_stb(int(match_id), int(commander_id), match_data)
+            if summary.ended_at is not None and summary.ended_at < cutoff:
+                continue
+            summaries.append(summary)
+            if len(summaries) >= limit:
+                break
         return summaries
+
+    async def get_player_analysis(self, steam_id: str) -> PlayerAnalysis | None:
+        steam_id = _require_steam_id(steam_id)
+        profile = await self._get_stb(f"/stb/commander/{steam_id}/steam", cache_key="day")
+        commander_id = profile["id"]
+        try:
+            payload = await asyncio.to_thread(
+                _request_json,
+                "GET",
+                f"{self._batrace_base_url}/api/analysis/player?stbid={commander_id}",
+                _plain_headers(),
+            )
+        except Exception:
+            return None
+        return _player_analysis_from_batrace(payload)
 
     async def get_match(self, match_id: str) -> MatchSummary:
         numeric_id = int(match_id.strip())
@@ -211,6 +325,20 @@ class BarmoryStbProvider:
         self._attest_token = payload["token"]
         self._attest_expires_at = int(payload["expiresAt"])
         return self._attest_token
+
+    async def _get_leaderboard_total(self) -> int | None:
+        if self._leaderboard_total_loaded:
+            return self._leaderboard_total
+        self._leaderboard_total_loaded = True
+        try:
+            data = await self._get_stb("/stb/leaderboard", cache_key="day")
+        except Exception:
+            return None
+        if isinstance(data, dict):
+            self._leaderboard_total = len(data)
+        elif isinstance(data, list):
+            self._leaderboard_total = len(data)
+        return self._leaderboard_total
 
     def _headers(self, request_type: str, attest_token: str | None = None) -> dict[str, str]:
         headers = {
@@ -254,6 +382,13 @@ def _request_json(method: str, url: str, headers: dict[str, str], payload: objec
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"BArmory request failed: {exc.code} {body[:200]}") from exc
+
+
+def _plain_headers() -> dict[str, str]:
+    return {
+        "Accept": "application/json",
+        "User-Agent": "BA-Monitor-Kirisame/0.1",
+    }
 
 
 def _optional_int(value: object) -> int | None:
@@ -312,3 +447,101 @@ def _match_summary_from_stb(match_id: int, data: dict) -> MatchSummary:
         top_destruction=top_player("Destruction"),
         top_damage=top_player("DamageDealt"),
     )
+
+
+def _player_analysis_from_batrace(data: dict) -> PlayerAnalysis:
+    categories = [
+        CategoryPreference(
+            key=str(item.get("categoryKey") or "unknown"),
+            name=_category_name(str(item.get("categoryKey") or "unknown")),
+            total_cost=round(float(item.get("totalCost") or 0)),
+            percentage=float(item.get("percentage") or 0),
+        )
+        for item in data.get("categoryPreferences", [])[:7]
+    ]
+    units = [
+        HighlightUnit(
+            unit_id=int(item.get("unitId") or 0),
+            name=str(item.get("unitName") or item.get("unitId") or "Unknown"),
+            category=_category_name_by_id(item.get("categoryType")),
+            spawn_count=int(item.get("spawnCount") or 0),
+            total_damage=float(item.get("totalDamage") or 0),
+            total_cost=round(float(item.get("totalCost") or 0)),
+            avg_roi=float(item.get("avgRoi") or 0),
+        )
+        for item in data.get("highlightUnits", [])[:10]
+    ]
+    play_style = data.get("playStyle") or {}
+    trend_points = data.get("trend", {}).get("points", [])
+    axes = [
+        PlayStyleAxis(
+            key=str(item.get("axis") or "unknown"),
+            value=float(item.get("value") or 0),
+            label=str(item.get("label") or ""),
+        )
+        for item in play_style.get("axes", [])
+    ]
+    return PlayerAnalysis(
+        match_count=int(data.get("matchCount") or 0),
+        category_preferences=categories,
+        highlight_units=units,
+        play_style_axes=axes,
+        primary_style=str(play_style.get("primaryStyle") or ""),
+        recent_win_rate=_recent_win_rate(trend_points),
+        recent_avg_objectives=_recent_avg_objectives(trend_points),
+        recent_avg_net_score=_recent_avg_net_score(trend_points),
+        recent_rating_delta=_recent_rating_delta(trend_points),
+    )
+
+
+def _category_name(key: str) -> str:
+    return {
+        "infantry": "步兵",
+        "vehicles": "载具",
+        "support": "支援",
+        "helicopters": "直升机",
+        "aircrafts": "战机",
+        "recon": "侦察",
+        "logistic": "后勤",
+    }.get(key, key)
+
+
+def _category_name_by_id(category_id: object) -> str:
+    return {
+        0: "侦察",
+        1: "步兵",
+        2: "载具",
+        3: "支援",
+        4: "后勤",
+        5: "直升机",
+        6: "战机",
+    }.get(_optional_int(category_id), "未知")
+
+
+def _recent_win_rate(points: list[dict]) -> float | None:
+    if not points:
+        return None
+    wins = sum(1 for item in points if item.get("won") is True)
+    return wins / len(points)
+
+
+def _recent_avg_objectives(points: list[dict]) -> float | None:
+    values = [float(item.get("objectivesCaptured") or 0) for item in points]
+    return sum(values) / len(values) if values else None
+
+
+def _recent_avg_net_score(points: list[dict]) -> float | None:
+    values = [
+        float(item.get("destructionScore") or 0) - float(item.get("lossesScore") or 0)
+        for item in points
+    ]
+    return sum(values) / len(values) if values else None
+
+
+def _recent_rating_delta(points: list[dict]) -> float | None:
+    deltas = [
+        float(item.get("ratingAfter") or 0) - float(item.get("ratingBefore") or 0)
+        for item in points
+        if item.get("ratingAfter") is not None and item.get("ratingBefore") is not None
+    ]
+    return sum(deltas) if deltas else None

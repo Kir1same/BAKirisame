@@ -9,9 +9,9 @@ from typing import Any
 import botpy
 from botpy.message import C2CMessage, GroupMessage, Message
 
-from ba_monitor.analysis import handle_command
+from ba_monitor.analysis import handle_command, parse_recent_argument
 from ba_monitor.bindings import BindingStore, UserContext
-from ba_monitor.cards import render_player_card
+from ba_monitor.cards import render_player_card, render_recent_card
 from ba_monitor.commands import CommandType, parse_command
 from ba_monitor.config import get_settings
 from ba_monitor.image_host import ImageHost, build_image_host
@@ -83,6 +83,8 @@ class BrokenArrowBot(botpy.Client):
 
     async def _reply_group_card(self, message: GroupMessage) -> bool:
         command = parse_command(message.content)
+        if command.type == CommandType.RECENT:
+            return await self._reply_group_recent_card(message)
         if command.type != CommandType.ME:
             return False
         context = build_user_context(message)
@@ -91,7 +93,8 @@ class BrokenArrowBot(botpy.Client):
             return False
         try:
             stats = await self.provider.get_player(steam_id)
-            image_url = await self.image_host.upload(render_player_card(stats))
+            analysis = await self._get_player_analysis(steam_id)
+            image_url = await self.image_host.upload(render_player_card(stats, analysis=analysis))
             media = await message._api.post_group_file(
                 group_openid=message.group_openid,
                 file_type=1,
@@ -111,6 +114,8 @@ class BrokenArrowBot(botpy.Client):
 
     async def _reply_c2c_card(self, message: C2CMessage) -> bool:
         command = parse_command(message.content)
+        if command.type == CommandType.RECENT:
+            return await self._reply_c2c_recent_card(message)
         if command.type != CommandType.ME:
             return False
         context = build_user_context(message)
@@ -119,7 +124,8 @@ class BrokenArrowBot(botpy.Client):
             return False
         try:
             stats = await self.provider.get_player(steam_id)
-            image_url = await self.image_host.upload(render_player_card(stats))
+            analysis = await self._get_player_analysis(steam_id)
+            image_url = await self.image_host.upload(render_player_card(stats, analysis=analysis))
             media = await message._api.post_c2c_file(
                 openid=message.author.user_openid,
                 file_type=1,
@@ -135,6 +141,67 @@ class BrokenArrowBot(botpy.Client):
             return True
         except Exception:
             LOGGER.exception("failed to send c2c player card")
+            return False
+
+    async def _get_player_analysis(self, steam_id: str):
+        try:
+            return await self.provider.get_player_analysis(steam_id)
+        except Exception:
+            LOGGER.exception("failed to fetch player analysis")
+            return None
+
+    async def _reply_group_recent_card(self, message: GroupMessage) -> bool:
+        command = parse_command(message.content)
+        context = build_user_context(message)
+        try:
+            steam_id, days = parse_recent_argument(command.argument, context, self.bindings)
+            player = await self.provider.get_player(steam_id)
+            matches = await self.provider.get_recent_matches(steam_id, days=days)
+            image_url = await self.image_host.upload(render_recent_card(player, matches))
+            media = await message._api.post_group_file(
+                group_openid=message.group_openid,
+                file_type=1,
+                url=image_url,
+            )
+            log_bot_reply("group", message, f"[image] {image_url}")
+            await message._api.post_group_message(
+                group_openid=message.group_openid,
+                msg_type=7,
+                msg_id=message.id,
+                media=media,
+            )
+            return True
+        except ValueError:
+            return False
+        except Exception:
+            LOGGER.exception("failed to send group recent card")
+            return False
+
+    async def _reply_c2c_recent_card(self, message: C2CMessage) -> bool:
+        command = parse_command(message.content)
+        context = build_user_context(message)
+        try:
+            steam_id, days = parse_recent_argument(command.argument, context, self.bindings)
+            player = await self.provider.get_player(steam_id)
+            matches = await self.provider.get_recent_matches(steam_id, days=days)
+            image_url = await self.image_host.upload(render_recent_card(player, matches))
+            media = await message._api.post_c2c_file(
+                openid=message.author.user_openid,
+                file_type=1,
+                url=image_url,
+            )
+            log_bot_reply("c2c", message, f"[image] {image_url}")
+            await message._api.post_c2c_message(
+                openid=message.author.user_openid,
+                msg_type=7,
+                msg_id=message.id,
+                media=media,
+            )
+            return True
+        except ValueError:
+            return False
+        except Exception:
+            LOGGER.exception("failed to send c2c recent card")
             return False
 
 

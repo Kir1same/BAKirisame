@@ -43,8 +43,8 @@ async def _handle_command(
         steam_id = command.argument.strip() or require_bound_steam_id(context, bindings)
         return format_player(await provider.get_player(steam_id))
     if command.type == CommandType.RECENT:
-        steam_id = command.argument.strip() or require_bound_steam_id(context, bindings)
-        return format_recent_matches(await provider.get_recent_matches(steam_id))
+        steam_id, days = parse_recent_argument(command.argument, context, bindings)
+        return format_recent_matches(await provider.get_recent_matches(steam_id, days=days), days)
     if command.type == CommandType.MATCH:
         if not command.argument:
             return "请提供对局 ID，例如：/match 5545812"
@@ -95,10 +95,32 @@ def format_player(stats: PlayerStats) -> str:
     )
 
 
-def format_recent_matches(matches: list[RecentMatch]) -> str:
+def parse_recent_argument(argument: str, context: UserContext, bindings: BindingStore) -> tuple[str, int]:
+    parts = argument.split()
+    steam_id = ""
+    days = 1
+    for part in parts:
+        if part.isdigit() and len(part) < 16:
+            days = parse_recent_days(part)
+        else:
+            steam_id = part
+    return steam_id or require_bound_steam_id(context, bindings), days
+
+
+def parse_recent_days(value: str) -> int:
+    try:
+        days = int(value)
+    except ValueError as exc:
+        raise ValueError("天数必须是数字，例如：/recent 3") from exc
+    if days < 1 or days > 30:
+        raise ValueError("近期战绩天数支持 1-30 天，例如：/recent 7")
+    return days
+
+
+def format_recent_matches(matches: list[RecentMatch], days: int = 1) -> str:
     if not matches:
-        return "没有查到近期对局。"
-    lines = ["最近对局："]
+        return f"最近 {days} 天没有查到可用对局。"
+    lines = [f"最近 {days} 天对局："]
     for match in matches:
         delta = "无 ELO"
         if match.rating_delta is not None:
