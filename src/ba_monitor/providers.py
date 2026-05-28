@@ -37,6 +37,11 @@ class RecentMatch:
     rating_delta: float | None
     duration_seconds: int | None
     ended_at: int | None
+    kills: int | None = None
+    losses: int | None = None
+    destruction_score: float | None = None
+    losses_score: float | None = None
+    objectives_captured: int | None = None
 
 
 @dataclass(frozen=True)
@@ -148,7 +153,19 @@ class MockGameDataProvider:
 
     async def get_recent_matches(self, steam_id: str, days: int = 1, limit: int = 20) -> list[RecentMatch]:
         return [
-            RecentMatch(5545812 + i, 4, "win" if i % 2 == 0 else "loss", 12.5 - i, 1800 + i * 60, None)
+            RecentMatch(
+                5545812 + i,
+                4,
+                "win" if i % 2 == 0 else "loss",
+                12.5 - i,
+                1800 + i * 60,
+                None,
+                kills=38 + i,
+                losses=28 + i,
+                destruction_score=4200 + i * 120,
+                losses_score=3100 + i * 80,
+                objectives_captured=2 + i % 3,
+            )
             for i in range(min(limit, max(1, days) * 4))
         ]
 
@@ -331,13 +348,16 @@ class BarmoryStbProvider:
             return self._leaderboard_total
         self._leaderboard_total_loaded = True
         try:
-            data = await self._get_stb("/stb/leaderboard", cache_key="day")
+            data = await asyncio.to_thread(
+                _request_json,
+                "GET",
+                "https://dash.batrace.top/api/leaderboard/rank?limit=1&offset=0",
+                _plain_headers(),
+            )
         except Exception:
             return None
         if isinstance(data, dict):
-            self._leaderboard_total = len(data)
-        elif isinstance(data, list):
-            self._leaderboard_total = len(data)
+            self._leaderboard_total = _optional_int(data.get("total"))
         return self._leaderboard_total
 
     def _headers(self, request_type: str, attest_token: str | None = None) -> dict[str, str]:
@@ -400,6 +420,15 @@ def _optional_int(value: object) -> int | None:
         return None
 
 
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _recent_match_from_stb(match_id: int, commander_id: int, data: dict) -> RecentMatch:
     player = data.get("Data", {}).get(str(commander_id), {})
     old_rating = player.get("OldRating")
@@ -410,12 +439,17 @@ def _recent_match_from_stb(match_id: int, commander_id: int, data: dict) -> Rece
 
     team_id = player.get("TeamId")
     winner_team = data.get("WinnerTeam")
-    if winner_team is None:
+    if winner_team is None or team_id is None:
         result = "unknown"
     elif team_id == winner_team:
         result = "win"
     else:
         result = "loss"
+    if result == "unknown" and rating_delta is not None:
+        if rating_delta > 0:
+            result = "win"
+        elif rating_delta < 0:
+            result = "loss"
 
     return RecentMatch(
         match_id=match_id,
@@ -424,6 +458,11 @@ def _recent_match_from_stb(match_id: int, commander_id: int, data: dict) -> Rece
         rating_delta=rating_delta,
         duration_seconds=_optional_int(data.get("TotalPlayTimeInSec")),
         ended_at=_optional_int(data.get("EndTime")),
+        kills=_optional_int(player.get("Destruction")),
+        losses=_optional_int(player.get("Losses")),
+        destruction_score=_optional_float(player.get("DestructionScore")),
+        losses_score=_optional_float(player.get("LossesScore")),
+        objectives_captured=_optional_int(player.get("ObjectivesCaptured")),
     )
 
 

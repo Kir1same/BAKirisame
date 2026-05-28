@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from ba_monitor.maps import format_map_name
 from ba_monitor.pr import PlayerRating, calculate_player_rating
 from ba_monitor.providers import CategoryPreference, MatchSummary, PlayerAnalysis, PlayerStats, RecentMatch
 
@@ -66,34 +67,82 @@ def render_player_card(
     return save(image, path or default_path("player", stats.steam_id))
 
 
-def render_recent_card(player: PlayerStats, matches: list[RecentMatch], path: Path | None = None) -> Path:
-    image, draw = new_canvas()
-    title(draw, "BROKEN ARROW", "RECENT FORM", player.name)
-    badge(draw, 930, 58, f"ELO {player.rating}", BLUE)
+def render_recent_card(
+    player: PlayerStats,
+    matches: list[RecentMatch],
+    path: Path | None = None,
+    days: int | None = None,
+) -> Path:
+    matches = sort_recent_matches(matches)
+    summary = build_recent_summary(matches)
+    rating = calculate_recent_rating(matches)
+    height = max(1040, 946 + max(1, len(matches)) * 52)
+    image, draw = new_light_canvas(height)
+    pr_color = rating_color(rating.score)
 
-    wins = sum(1 for item in matches if normalize_result(item.result) == "win")
-    losses = sum(1 for item in matches if normalize_result(item.result) == "loss")
-    total_delta = sum(item.rating_delta or 0 for item in matches)
-    draw_metric(draw, 64, 162, 250, 112, "RECENT", f"{wins}-{losses}", GREEN if wins >= losses else RED)
-    draw_metric(draw, 336, 162, 250, 112, "ELO DELTA", signed(total_delta), GREEN if total_delta >= 0 else RED)
-    draw_metric(draw, 608, 162, 250, 112, "WIN RATE", f"{safe_rate(wins, len(matches)):.1%}", GREEN)
-    draw_metric(draw, 880, 162, 250, 112, "SAMPLE", str(len(matches)), TEXT)
+    draw.rectangle((48, 64, 1152, 274), fill="#eef1f5")
+    draw.rectangle((64, 84, 72, 254), fill="#9aa1aa")
+    draw_text(draw, (92, 92), truncate(player.name, 22), 54, "#11151a", bold=True)
+    draw_text(draw, (96, 154), f"STEAM -- {player.steam_id}", 24, "#7a828d", bold=True)
+    draw_text(draw, (96, 206), f"当前 ELO：{player.rating:,}    全服排名：{format_rank_with_percent(player.rank, player.ranked_total)}", 26, "#373d45", bold=True)
+    draw_text(draw, (620, 104), "BA Monitor Kirisame", 28, "#5fb4ff", bold=True)
+    draw_text(draw, (620, 150), "BROKEN ARROW RECENT REPORT", 22, "#6f7782")
+    draw_text(draw, (700, 232), recent_scope_text(days, matches), 22, "#373d45", bold=True)
 
-    draw_section(draw, 64, 316, 1066, 304, "MATCH HISTORY")
-    y = 372
-    for item in matches[:5]:
+    draw.rectangle((48, 306, 1152, 384), fill=pr_color)
+    draw_text(draw, (74, 321), f"近期「{rating.label}」", 42, "#ffffff", bold=True)
+    draw_text(draw, (380, 340), f"样本：{len(matches)} 场", 22, "#ffffff", bold=True)
+    draw_text(draw, (850, 324), f"近期PR: {rating.score:,}", 38, "#ffffff", bold=True)
+
+    draw_light_section_header(draw, 48, 408, 1104, "近期水平")
+    draw_recent_metric_box(draw, 76, 486, 250, 160, "胜率", f"{summary['win_rate']:.2%}", rating_color(round(summary["win_rate"] * 3000)), f"{summary['wins']} 胜 / {summary['losses']} 负")
+    draw_recent_metric_box(draw, 348, 486, 230, 160, "击毁/损失", format_optional_ratio(summary["score_ratio"]), rating_color(round(min((summary["score_ratio"] or 0) / 1.8, 1) * 3000)), f"{round(summary['destruction_score']):,} / {round(summary['losses_score']):,}")
+    delta = summary["rating_delta"]
+    draw_recent_metric_box(draw, 600, 486, 250, 160, "ELO变化", signed(delta), "#259b24" if delta >= 0 else "#d64949", f"当前 {player.rating:,}")
+    draw_recent_metric_box(draw, 872, 486, 252, 160, "场均占点", format_optional_decimal(summary["avg_objectives"], 1), "#259b24", f"场均战损 {signed(summary['avg_net_score'])}")
+
+    draw_text(
+        draw,
+        (88, 664),
+        f"该 PR 仅评价最近 {len(matches)} 场有效对局；击毁/损失比为辅助表现项。",
+        22,
+        "#6b737c",
+        bold=True,
+    )
+
+    table_y = 714
+    draw_light_section_header(draw, 48, table_y, 1104, "逐场战斗")
+    headers = [("时间", 132), ("结果", 94), ("ELO", 112), ("击损比", 104), ("占点", 100), ("战损净值", 142), ("时长", 112), ("地图", 112), ("对局", 206)]
+    draw_recent_table_header(draw, 64, table_y + 62, headers)
+    row_y = table_y + 112
+    if not matches:
+        draw.rectangle((48, row_y, 1152, row_y + 52), fill="#e8eaee")
+        draw_text(draw, (88, row_y + 12), "这个时间范围内暂时没有可用对局。", 24, "#6b737c", bold=True)
+    for index, item in enumerate(matches):
+        fill = "#e8eaee" if index % 2 == 0 else "#f0f2f5"
         result = normalize_result(item.result)
-        color = GREEN if result == "win" else RED if result == "loss" else MUTED
-        draw.rounded_rectangle((96, y, 1098, y + 42), radius=8, fill="#0c121b", outline="#1d2a3a")
-        draw_text(draw, (116, y + 8), f"#{item.match_id}", 22, TEXT)
-        draw_text(draw, (288, y + 8), f"地图 {item.map_id or '?'}", 22, MUTED)
-        draw_text(draw, (430, y + 8), format_result_badge(result), 22, color)
-        draw_text(draw, (590, y + 8), f"ELO {signed(item.rating_delta)}", 22, color)
-        draw_text(draw, (750, y + 8), format_duration(item.duration_seconds), 22, MUTED)
-        draw_text(draw, (940, y + 8), format_time(item.ended_at), 22, MUTED)
-        y += 52
+        result_color = "#259b24" if result == "win" else "#d64949" if result == "loss" else "#6b737c"
+        net_score = recent_match_net_score(item)
+        values = [
+            (format_time(item.ended_at) or "N/A", 132, "#555d67", 8),
+            (format_result_cn(result), 94, result_color, 22),
+            (signed(item.rating_delta), 112, "#259b24" if (item.rating_delta or 0) >= 0 else "#d64949", 8),
+            (format_score_ratio(item), 104, rating_color(round(min((match_score_ratio(item) or 0) / 1.8, 1) * 3000)), 8),
+            (str(item.objectives_captured) if item.objectives_captured is not None else "N/A", 100, "#259b24", 8),
+            (signed(net_score), 142, "#259b24" if net_score >= 0 else "#d64949", 8),
+            (format_duration_compact(item.duration_seconds), 112, "#555d67", 8),
+            (truncate(format_map_name(item.map_id), 8), 112, "#555d67", 8),
+            (f"#{item.match_id}", 206, "#343a42", 8),
+        ]
+        draw.rectangle((48, row_y, 1152, row_y + 48), fill=fill)
+        cursor = 64
+        for value, width, color, offset in values:
+            draw_text(draw, (cursor + offset, row_y + 10), value, 22, color, bold=True)
+            cursor += width
+        row_y += 52
 
-    footer(draw)
+    draw_text(draw, (116, height - 72), "Powered by BA Monitor Kirisame · data via BArmory STB", 24, "#9ca3ad", bold=True)
+    draw_text(draw, (356, height - 40), "近期PR只基于本次查询范围内的有效对局", 22, "#a8afb8", bold=True)
     return save(image, path or default_path("recent", player.steam_id))
 
 
@@ -102,7 +151,7 @@ def render_match_card(match: MatchSummary, path: Path | None = None) -> Path:
     title(draw, "BROKEN ARROW", "MATCH REPORT", f"#{match.match_id}")
     badge(draw, 920, 58, f"TEAM {match.winner_team or '?'} WON", GREEN)
 
-    draw_metric(draw, 64, 178, 250, 128, "MAP", str(match.map_id or "?"), BLUE)
+    draw_metric(draw, 64, 178, 250, 128, "MAP", format_map_name(match.map_id), BLUE)
     draw_metric(draw, 336, 178, 250, 128, "PLAYERS", str(match.player_count), TEXT)
     draw_metric(draw, 608, 178, 250, 128, "DURATION", format_duration(match.duration_seconds), AMBER)
     draw_metric(draw, 880, 178, 250, 128, "ENDED", format_time(match.ended_at) or "N/A", MUTED)
@@ -131,6 +180,15 @@ def new_player_canvas() -> tuple[Image.Image, ImageDraw.ImageDraw]:
     draw = ImageDraw.Draw(image)
     draw.rectangle((0, 0, 1200, 1600), fill="#f5f6f8")
     for y in range(0, 1600, 36):
+        draw.line((48, y, 1152, y), fill="#edf0f3", width=1)
+    return image, draw
+
+
+def new_light_canvas(height: int) -> tuple[Image.Image, ImageDraw.ImageDraw]:
+    image = Image.new("RGB", (1200, height), "#f5f6f8")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 1200, height), fill="#f5f6f8")
+    for y in range(0, height, 36):
         draw.line((48, y, 1152, y), fill="#edf0f3", width=1)
     return image, draw
 
@@ -194,6 +252,14 @@ def draw_table_header(draw: ImageDraw.ImageDraw, x: int, y: int, headers: list[t
     cursor = x
     for label, width in headers:
         draw_text(draw, (cursor + 12, y + 10), label, 24, "#4e555e", bold=True)
+        cursor += width
+
+
+def draw_recent_table_header(draw: ImageDraw.ImageDraw, x: int, y: int, headers: list[tuple[str, int]]) -> None:
+    cursor = x
+    for label, width in headers:
+        offset = 26 if label == "结果" else 12
+        draw_text(draw, (cursor + offset, y + 10), label, 24, "#4e555e", bold=True)
         cursor += width
 
 
@@ -272,7 +338,7 @@ def draw_recent_effective_panel(
     analysis: PlayerAnalysis | None,
 ) -> None:
     draw_light_section_header(draw, x, y, 1104, "近期有效对局")
-    headers = [("样本", 130), ("近期胜率", 170), ("场均占点", 160), ("净贡献", 170), ("Rating趋势", 180), ("数据范围", 190)]
+    headers = [("样本", 130), ("近期胜率", 170), ("场均占点", 160), ("战损净值", 170), ("Rating趋势", 180), ("数据范围", 190)]
     draw_table_header(draw, x + 28, y + 62, headers)
     row = build_recent_effective_row(stats, rating, analysis)
     row_y = y + 112
@@ -311,10 +377,9 @@ def draw_compact_analysis_panel(draw: ImageDraw.ImageDraw, x: int, y: int, analy
     draw_text(draw, (x + 594, y + 74), "高光单位", 27, "#343a42", bold=True)
     row_y = y + 118
     for unit in analysis.highlight_units[:3]:
-        roi_color = "#259b24" if unit.avg_roi >= 1 else "#f28c28" if unit.avg_roi >= 0.65 else "#d64949"
         draw_text(draw, (x + 594, row_y), truncate(unit.name, 18), 22, "#343a42", bold=True)
         draw_text(draw, (x + 838, row_y), unit.category, 22, category_color(unit.category), bold=True)
-        draw_text(draw, (x + 930, row_y), f"ROI {unit.avg_roi:.2f}", 22, roi_color, bold=True)
+        draw_text(draw, (x + 930, row_y), f"出场 {unit.spawn_count}", 22, "#555d67", bold=True)
         row_y += 44
 
     axes = " / ".join(style_axis_text(axis) for axis in analysis.play_style_axes[:3])
@@ -440,6 +505,128 @@ def build_specialization_rows(stats: PlayerStats, rating: PlayerRating, country:
     return rows
 
 
+def draw_recent_metric_box(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    label: str,
+    value: str,
+    color: str,
+    detail: str,
+) -> None:
+    draw.rectangle((x, y, x + w, y + h), fill="#e8eaee")
+    draw_text(draw, (x + 28, y + 22), label, 28, "#4e555e", bold=True)
+    draw_text(draw, (x + 28, y + 66), value, 48, color, bold=True)
+    draw_text(draw, (x + 28, y + 122), truncate(detail, 18), 21, "#6b737c", bold=True)
+
+
+def sort_recent_matches(matches: list[RecentMatch]) -> list[RecentMatch]:
+    return sorted(matches, key=lambda item: (item.ended_at is None, item.ended_at or 0))
+
+
+def build_recent_summary(matches: list[RecentMatch]) -> dict[str, float | int | None]:
+    wins = sum(1 for item in matches if normalize_result(item.result) == "win")
+    losses = sum(1 for item in matches if normalize_result(item.result) == "loss")
+    destruction_score = sum(item.destruction_score or 0 for item in matches)
+    losses_score = sum(item.losses_score or 0 for item in matches)
+    objectives = [item.objectives_captured for item in matches if item.objectives_captured is not None]
+    net_scores = [recent_match_net_score(item) for item in matches]
+    return {
+        "wins": wins,
+        "losses": losses,
+        "win_rate": safe_rate(wins, len(matches)),
+        "destruction_score": destruction_score,
+        "losses_score": losses_score,
+        "score_ratio": destruction_score / losses_score if losses_score else None,
+        "rating_delta": sum(item.rating_delta or 0 for item in matches),
+        "avg_objectives": sum(objectives) / len(objectives) if objectives else None,
+        "avg_net_score": sum(net_scores) / len(net_scores) if net_scores else 0.0,
+    }
+
+
+def calculate_recent_rating(matches: list[RecentMatch]) -> PlayerRating:
+    summary = build_recent_summary(matches)
+    sample = len(matches)
+    if sample == 0:
+        return PlayerRating(0, rating_label_for_card(0))
+    win_rate = float(summary["win_rate"] or 0)
+    score_ratio = float(summary["score_ratio"] or 0)
+    rating_delta = float(summary["rating_delta"] or 0)
+    avg_objectives = float(summary["avg_objectives"] or 0)
+    avg_net_score = float(summary["avg_net_score"] or 0)
+    score = (
+        recent_win_score(win_rate) * 0.55
+        + recent_team_score(avg_objectives, avg_net_score) * 0.20
+        + recent_delta_score(rating_delta, sample) * 0.15
+        + recent_score_ratio_score(score_ratio) * 0.07
+        + min(100, sample * 6) * 0.03
+    )
+    confidence = 0.55 + min(sample, 10) * 0.045
+    normalized = max(0, min(3000, round(score * confidence * 30)))
+    return PlayerRating(normalized, rating_label_for_card(normalized))
+
+
+def recent_win_score(win_rate: float) -> float:
+    return max(0.0, min(100.0, (win_rate - 0.36) / 0.0036))
+
+
+def recent_team_score(avg_objectives: float, avg_net_score: float) -> float:
+    objective_score = max(0.0, min(100.0, avg_objectives / 3.5 * 100))
+    net_score = max(0.0, min(100.0, (avg_net_score + 900) / 28))
+    return objective_score * 0.20 + net_score * 0.80
+
+
+def recent_delta_score(rating_delta: float, sample: int) -> float:
+    expected_window = max(1, sample) * 8
+    return max(0.0, min(100.0, (rating_delta + expected_window) / (expected_window * 2) * 100))
+
+
+def recent_score_ratio_score(score_ratio: float) -> float:
+    if score_ratio <= 0.5:
+        return 0.0
+    return max(0.0, min(100.0, ((min(score_ratio, 2.0) - 0.5) / 1.5) ** 0.7 * 100))
+
+
+def recent_match_net_score(match: RecentMatch) -> float:
+    return float(match.destruction_score or 0) - float(match.losses_score or 0)
+
+
+def match_score_ratio(match: RecentMatch) -> float | None:
+    if match.destruction_score is None or match.losses_score is None or match.losses_score <= 0:
+        return None
+    return match.destruction_score / match.losses_score
+
+
+def format_score_ratio(match: RecentMatch) -> str:
+    return format_optional_ratio(match_score_ratio(match))
+
+
+def format_optional_ratio(value: float | None) -> str:
+    return "N/A" if value is None else f"{value:.3f}"
+
+
+def format_optional_decimal(value: float | None, digits: int) -> str:
+    return "N/A" if value is None else f"{value:.{digits}f}"
+
+
+def format_result_cn(result: str) -> str:
+    return {"win": "胜", "loss": "负"}.get(result, "未知")
+
+
+def format_duration_compact(seconds: int | None) -> str:
+    if not seconds:
+        return "N/A"
+    return f"{seconds // 60}m"
+
+
+def recent_scope_text(days: int | None, matches: list[RecentMatch]) -> str:
+    if days:
+        return f"最近 {days} 天 · {len(matches)} 场有效对局"
+    return f"最近样本 · {len(matches)} 场有效对局"
+
+
 def build_recent_effective_row(
     stats: PlayerStats,
     rating: PlayerRating,
@@ -494,7 +681,7 @@ def recent_summary_text(
     if objectives is not None:
         parts.append(f"场均占点 {objectives:.1f}")
     if net_score is not None:
-        parts.append(f"场均净贡献 {signed(net_score)}")
+        parts.append(f"场均战损净值 {signed(net_score)}")
     if rating_delta is not None:
         parts.append(f"Rating {signed(rating_delta)}")
     return "    ".join(parts)

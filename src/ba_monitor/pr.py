@@ -18,9 +18,9 @@ def calculate_player_rating(stats: PlayerStats, analysis: PlayerAnalysis | None 
     # capped with diminishing returns so farming kills cannot dominate the score.
     base = (
         _win_rate_score(stats.win_rate) * 0.46
-        + _elo_score(stats.rating) * 0.18
-        + _rank_score(stats.rank, stats.ranked_total) * 0.18
-        + _kd_score(stats.kd_ratio) * 0.05
+        + _elo_score(stats.rating) * 0.13
+        + _rank_score(stats.rank, stats.ranked_total) * 0.13
+        + _kd_score(stats.kd_ratio) * 0.15
         + _sample_score(stats.matches) * 0.07
         + _recent_adjustment(analysis)
         - _leave_penalty(stats.leaves, stats.matches)

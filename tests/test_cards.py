@@ -1,4 +1,4 @@
-from ba_monitor.cards import rank_percent_text, rank_tier_color, render_match_card, render_player_card, render_recent_card
+from ba_monitor.cards import rank_percent_text, rank_tier_color, render_match_card, render_player_card, render_recent_card, sort_recent_matches
 from ba_monitor.providers import (
     CategoryPreference,
     HighlightUnit,
@@ -83,6 +83,31 @@ def test_render_recent_card(tmp_path) -> None:
 
     assert path.exists()
     assert path.stat().st_size > 10_000
+
+
+def test_render_recent_card_uses_map_fallback_label(tmp_path) -> None:
+    player = PlayerStats("Kirisame", "76561198157609957", 2450, 42, 0.612, 1.337, 320, 2, 51)
+    path = render_recent_card(
+        player,
+        [RecentMatch(5545812, 12, "win", 12.3, 2136, 1772992500)],
+        tmp_path / "recent-map.png",
+        days=7,
+    )
+
+    assert path.exists()
+    assert path.stat().st_size > 10_000
+
+
+def test_sort_recent_matches_by_date() -> None:
+    ordered = sort_recent_matches(
+        [
+            RecentMatch(2, 4, "win", 1, 1800, 200),
+            RecentMatch(3, 4, "win", 1, 1800, None),
+            RecentMatch(1, 4, "win", 1, 1800, 100),
+        ]
+    )
+
+    assert [item.match_id for item in ordered] == [1, 2, 3]
 
 
 def test_render_match_card(tmp_path) -> None:

@@ -6,5 +6,6 @@ __pycache__/
 *.pyc
 *.log
 logs/
-data/
+data/*
+!data/maps.json
 artifacts/

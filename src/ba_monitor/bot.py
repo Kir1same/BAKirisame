@@ -157,7 +157,17 @@ class BrokenArrowBot(botpy.Client):
             steam_id, days = parse_recent_argument(command.argument, context, self.bindings)
             player = await self.provider.get_player(steam_id)
             matches = await self.provider.get_recent_matches(steam_id, days=days)
-            image_url = await self.image_host.upload(render_recent_card(player, matches))
+            if not matches:
+                content = f"{player.name} 最近 {days} 天没有可用对局数据。"
+                log_bot_reply("group", message, content)
+                await message._api.post_group_message(
+                    group_openid=message.group_openid,
+                    msg_type=0,
+                    msg_id=message.id,
+                    content=content,
+                )
+                return True
+            image_url = await self.image_host.upload(render_recent_card(player, matches, days=days))
             media = await message._api.post_group_file(
                 group_openid=message.group_openid,
                 file_type=1,
@@ -184,7 +194,17 @@ class BrokenArrowBot(botpy.Client):
             steam_id, days = parse_recent_argument(command.argument, context, self.bindings)
             player = await self.provider.get_player(steam_id)
             matches = await self.provider.get_recent_matches(steam_id, days=days)
-            image_url = await self.image_host.upload(render_recent_card(player, matches))
+            if not matches:
+                content = f"{player.name} 最近 {days} 天没有可用对局数据。"
+                log_bot_reply("c2c", message, content)
+                await message._api.post_c2c_message(
+                    openid=message.author.user_openid,
+                    msg_type=0,
+                    msg_id=message.id,
+                    content=content,
+                )
+                return True
+            image_url = await self.image_host.upload(render_recent_card(player, matches, days=days))
             media = await message._api.post_c2c_file(
                 openid=message.author.user_openid,
                 file_type=1,
