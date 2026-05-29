@@ -1,7 +1,16 @@
+from datetime import datetime, timezone
+
 import pytest
 
 import ba_monitor.providers as providers
-from ba_monitor.providers import BarmoryStbProvider, _recent_match_from_stb, _server_condition_from_batrace
+from ba_monitor.providers import (
+    BarmoryStbProvider,
+    _recent_match_from_stb,
+    _server_condition_from_batrace,
+    _server_condition_from_steam,
+    _server_condition_is_fresh,
+    _normalize_batrace_time,
+)
 
 
 def test_recent_match_falls_back_to_rating_delta_for_unknown_winner() -> None:
@@ -77,3 +86,45 @@ def test_server_condition_from_batrace() -> None:
 
     assert condition.online == 3157
     assert condition.regions[0].region == "亚太"
+
+
+def test_server_condition_from_steam() -> None:
+    condition = _server_condition_from_steam({"response": {"player_count": 2567, "result": 1}})
+
+    assert condition.online == 2567
+    assert condition.source == "Steam"
+    assert condition.detail_available is False
+    assert condition.in_battle is None
+
+
+def test_server_condition_old_batrace_snapshot_is_not_fresh() -> None:
+    condition = _server_condition_from_batrace(
+        {
+            "serversByRegion": [],
+            "online": {
+                "online": 3157,
+                "inLobby": 48,
+                "inSearching": 45,
+                "inBattle": 1127,
+                "instances": 460,
+                "timestamp": "2020-01-01T00:00:00.000Z",
+            },
+        }
+    )
+
+    assert _server_condition_is_fresh(condition) is False
+
+
+def test_normalize_batrace_future_time_as_china_local(monkeypatch) -> None:
+    class FrozenDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 5, 29, 10, 0, tzinfo=timezone.utc)
+
+        @classmethod
+        def fromisoformat(cls, value):
+            return datetime.fromisoformat(value)
+
+    monkeypatch.setattr("ba_monitor.providers.datetime", FrozenDateTime)
+
+    assert _normalize_batrace_time("2026-05-29T18:00:00.000Z") == "2026-05-29T10:00:00+00:00"

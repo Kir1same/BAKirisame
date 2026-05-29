@@ -8,6 +8,7 @@ import urllib.parse
 import urllib.request
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 
@@ -68,12 +69,14 @@ class ServerRegionCondition:
 @dataclass(frozen=True)
 class ServerCondition:
     online: int
-    in_lobby: int
-    in_searching: int
-    in_battle: int
-    instances: int
+    in_lobby: int | None
+    in_searching: int | None
+    in_battle: int | None
+    instances: int | None
     timestamp: str | None
     regions: list[ServerRegionCondition]
+    source: str = "unknown"
+    detail_available: bool = True
 
 
 @dataclass(frozen=True)
@@ -260,6 +263,7 @@ class MockGameDataProvider:
                 ServerRegionCondition("北美", 32, 32, "2026-05-29T06:01:30.000Z"),
                 ServerRegionCondition("欧洲", 4, 4, "2026-05-29T06:01:30.000Z"),
             ],
+            source="mock",
         )
 
     async def get_match(self, match_id: str) -> MatchSummary:
@@ -382,13 +386,27 @@ class BarmoryStbProvider:
         return _player_distribution_from_batrace(payload if isinstance(payload, dict) else {})
 
     async def get_server_condition(self) -> ServerCondition:
+        cache_buster = int(time.time())
+        try:
+            payload = await asyncio.to_thread(
+                _request_json,
+                "GET",
+                f"https://dash.batrace.top/api/home/server-status?_={cache_buster}",
+                _plain_headers(),
+            )
+            condition = _server_condition_from_batrace(payload if isinstance(payload, dict) else {})
+            if _server_condition_is_fresh(condition):
+                return condition
+        except Exception:
+            pass
+
         payload = await asyncio.to_thread(
             _request_json,
             "GET",
-            "https://dash.batrace.top/api/home/server-status",
+            "https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=1604270",
             _plain_headers(),
         )
-        return _server_condition_from_batrace(payload if isinstance(payload, dict) else {})
+        return _server_condition_from_steam(payload if isinstance(payload, dict) else {})
 
     async def get_match(self, match_id: str) -> MatchSummary:
         numeric_id = int(match_id.strip())
@@ -679,7 +697,7 @@ def _server_condition_from_batrace(data: dict) -> ServerCondition:
             region=str(item.get("region") or "未知"),
             total=_optional_int(item.get("total")) or 0,
             active=_optional_int(item.get("active")) or 0,
-            last_seen=str(item.get("lastSeen")) if item.get("lastSeen") else None,
+            last_seen=_normalize_batrace_time(item.get("lastSeen")),
         )
         for item in data.get("serversByRegion", [])
         if isinstance(item, dict)
@@ -690,9 +708,50 @@ def _server_condition_from_batrace(data: dict) -> ServerCondition:
         in_searching=_optional_int(online.get("inSearching")) or 0,
         in_battle=_optional_int(online.get("inBattle")) or 0,
         instances=_optional_int(online.get("instances")) or 0,
-        timestamp=str(online.get("timestamp")) if online.get("timestamp") else None,
+        timestamp=_normalize_batrace_time(online.get("timestamp")),
         regions=regions,
+        source="BATrace",
+        detail_available=True,
     )
+
+
+def _server_condition_from_steam(data: dict) -> ServerCondition:
+    response = data.get("response") if isinstance(data.get("response"), dict) else {}
+    return ServerCondition(
+        online=_optional_int(response.get("player_count")) or 0,
+        in_lobby=None,
+        in_searching=None,
+        in_battle=None,
+        instances=None,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        regions=[],
+        source="Steam",
+        detail_available=False,
+    )
+
+
+def _server_condition_is_fresh(condition: ServerCondition, max_age_seconds: int = 30 * 60) -> bool:
+    if not condition.timestamp:
+        return False
+    try:
+        timestamp = datetime.fromisoformat(condition.timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    age = datetime.now(timezone.utc) - timestamp.astimezone(timezone.utc)
+    return 0 <= age.total_seconds() <= max_age_seconds
+
+
+def _normalize_batrace_time(value: object) -> str | None:
+    if not value:
+        return None
+    raw = str(value)
+    try:
+        timestamp = datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return raw
+    if timestamp - datetime.now(timezone.utc) > timedelta(hours=1):
+        timestamp -= timedelta(hours=8)
+    return timestamp.isoformat()
 
 
 def _distribution_buckets(items: object) -> list[DistributionBucket]:

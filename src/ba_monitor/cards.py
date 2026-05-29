@@ -194,7 +194,8 @@ def render_rank_card(
 def render_server_condition_card(condition: ServerCondition, path: Path | None = None) -> Path:
     image, draw = new_light_canvas(840)
     health_ratio = safe_rate(sum(region.active for region in condition.regions), sum(region.total for region in condition.regions))
-    banner_color = "#259b24" if health_ratio >= 0.95 else "#f28c28" if health_ratio >= 0.75 else "#d64949"
+    banner_color = "#259b24" if condition.online > 0 else "#d64949"
+    region_online = sum(region.active for region in condition.regions)
 
     draw.rectangle((48, 64, 1152, 238), fill="#eef1f5")
     draw.rectangle((64, 84, 72, 218), fill="#9aa1aa")
@@ -204,28 +205,38 @@ def render_server_condition_card(condition: ServerCondition, path: Path | None =
     draw_text(draw, (620, 150), "LIVE SERVER REPORT", 22, "#6f7782")
 
     draw.rectangle((48, 270, 1152, 348), fill=banner_color)
-    draw_text(draw, (74, 285), server_health_label(health_ratio), 42, "#ffffff", bold=True)
-    draw_text(draw, (330, 304), f"在线服务器：{sum(region.active for region in condition.regions)}", 22, "#ffffff", bold=True)
-    draw_text(draw, (842, 288), f"在线 {condition.online:,}", 38, "#ffffff", bold=True)
+    draw_text(draw, (74, 285), "实时在线", 42, "#ffffff", bold=True)
+    detail = f"数据源：{condition.source}"
+    if condition.detail_available:
+        detail = f"在线服务器：{region_online}"
+    draw_text(draw, (330, 304), detail, 22, "#ffffff", bold=True)
+    draw_text(draw, (802, 288), f"玩家 {condition.online:,}", 38, "#ffffff", bold=True)
 
     draw_light_section_header(draw, 48, 372, 1104, "实时玩家")
-    draw_server_metric_box(draw, 76, 450, 196, 140, "在线", f"{condition.online:,}", "#259b24")
-    draw_server_metric_box(draw, 292, 450, 196, 140, "战斗中", f"{condition.in_battle:,}", "#30acc4")
-    draw_server_metric_box(draw, 508, 450, 196, 140, "房间", f"{condition.in_lobby:,}", "#63b33d")
-    draw_server_metric_box(draw, 724, 450, 196, 140, "搜索中", f"{condition.in_searching:,}", "#f28c28")
-    draw_server_metric_box(draw, 940, 450, 184, 140, "运行战局", f"{condition.instances:,}", "#7a3db8")
+    if condition.detail_available:
+        draw_server_metric_box(draw, 76, 450, 196, 140, "在线", f"{condition.online:,}", "#259b24")
+        draw_server_metric_box(draw, 292, 450, 196, 140, "战斗中", f"{condition.in_battle or 0:,}", "#30acc4")
+        draw_server_metric_box(draw, 508, 450, 196, 140, "房间", f"{condition.in_lobby or 0:,}", "#63b33d")
+        draw_server_metric_box(draw, 724, 450, 196, 140, "搜索中", f"{condition.in_searching or 0:,}", "#f28c28")
+        draw_server_metric_box(draw, 940, 450, 184, 140, "运行战局", f"{condition.instances or 0:,}", "#7a3db8")
 
-    draw_light_section_header(draw, 48, 626, 1104, "地区服务器")
-    row_y = 698
-    for index, region in enumerate(condition.regions[:5]):
-        fill = "#e8eaee" if index % 2 == 0 else "#f0f2f5"
-        ratio = safe_rate(region.active, region.total)
-        color = "#259b24" if ratio >= 0.95 else "#f28c28" if ratio >= 0.75 else "#d64949"
-        draw.rectangle((76 + index * 210, row_y, 250 + index * 210, row_y + 64), fill=fill)
-        draw_text(draw, (96 + index * 210, row_y + 10), region.region, 22, "#343a42", bold=True)
-        draw_text(draw, (96 + index * 210, row_y + 34), f"{region.active} 台在线", 24, color, bold=True)
+        draw_light_section_header(draw, 48, 626, 1104, "地区服务器")
+        row_y = 698
+        for index, region in enumerate(condition.regions[:5]):
+            fill = "#e8eaee" if index % 2 == 0 else "#f0f2f5"
+            ratio = safe_rate(region.active, region.total)
+            color = "#259b24" if ratio >= 0.95 else "#f28c28" if ratio >= 0.75 else "#d64949"
+            draw.rectangle((76 + index * 210, row_y, 250 + index * 210, row_y + 64), fill=fill)
+            draw_text(draw, (96 + index * 210, row_y + 10), region.region, 22, "#343a42", bold=True)
+            draw_text(draw, (96 + index * 210, row_y + 34), f"{region.active} 台在线", 24, color, bold=True)
+    else:
+        draw_server_metric_box(draw, 76, 450, 332, 140, "在线玩家", f"{condition.online:,}", "#259b24")
+        draw.rectangle((436, 450, 1124, 590), fill="#e8eaee")
+        draw_text(draw, (466, 474), "细分状态暂不可用", 30, "#4e555e", bold=True)
+        draw_text(draw, (466, 526), "BATrace 细分接口停留在旧快照。", 22, "#6b737c", bold=True)
+        draw_text(draw, (466, 556), "本卡仅展示 Steam 官方实时在线人数。", 22, "#6b737c", bold=True)
 
-    draw_text(draw, (116, 792), "BA Monitor Kirisame 测试版 · data via BATrace", 22, "#9ca3ad", bold=True)
+    draw_text(draw, (116, 792), f"BA Monitor Kirisame 测试版 · data via {condition.source}", 22, "#9ca3ad", bold=True)
     draw_text(draw, (666, 792), f"更新时间：{format_iso_time(condition.timestamp)}", 20, "#a8afb8", bold=True)
     return save(image, path or default_path("server", "condition"))
 

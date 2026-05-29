@@ -122,11 +122,16 @@ def format_rank_position(stats: PlayerStats) -> str:
 def format_server_condition(condition: ServerCondition) -> str:
     lines = [
         "服务器状态：",
-        f"在线：{condition.online:,}    战斗中：{condition.in_battle:,}",
-        f"房间：{condition.in_lobby:,}    搜索中：{condition.in_searching:,}    运行战局：{condition.instances:,}",
+        f"在线玩家：{condition.online:,}",
     ]
-    for region in condition.regions:
-        lines.append(f"{region.region}：{region.active}/{region.total} 活跃")
+    if condition.detail_available:
+        lines.append(f"战斗中：{condition.in_battle or 0:,}")
+        lines.append(f"房间：{condition.in_lobby or 0:,}    搜索中：{condition.in_searching or 0:,}    运行战局：{condition.instances or 0:,}")
+        for region in condition.regions:
+            lines.append(f"{region.region}：{region.active} 台在线")
+    else:
+        lines.append("细分状态：暂不可用")
+    lines.append(f"数据源：{condition.source}")
     if condition.timestamp:
         lines.append(f"更新时间：{condition.timestamp}")
     return "\n".join(lines)
