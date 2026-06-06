@@ -96,6 +96,7 @@ class BrokenArrowBot(botpy.Client):
         if command.type not in (CommandType.ME, CommandType.PLAYER):
             return False
         context = build_user_context(message)
+        image_url = ""
         try:
             steam_id = parse_player_card_steam_id(command, context, self.bindings)
             stats = await self.provider.get_player(steam_id)
@@ -118,7 +119,11 @@ class BrokenArrowBot(botpy.Client):
             return False
         except Exception:
             LOGGER.exception("failed to send group player card")
-            return False
+            if image_url:
+                await self._reply_group_text(message, image_send_failure_text(image_url))
+            else:
+                await self._reply_group_text(message, data_query_failure_text(command.type.value))
+            return True
 
     async def _reply_c2c_card(self, message: C2CMessage) -> bool:
         command = parse_command(message.content)
@@ -133,6 +138,7 @@ class BrokenArrowBot(botpy.Client):
         if command.type not in (CommandType.ME, CommandType.PLAYER):
             return False
         context = build_user_context(message)
+        image_url = ""
         try:
             steam_id = parse_player_card_steam_id(command, context, self.bindings)
             stats = await self.provider.get_player(steam_id)
@@ -155,7 +161,29 @@ class BrokenArrowBot(botpy.Client):
             return False
         except Exception:
             LOGGER.exception("failed to send c2c player card")
-            return False
+            if image_url:
+                await self._reply_c2c_text(message, image_send_failure_text(image_url))
+            else:
+                await self._reply_c2c_text(message, data_query_failure_text(command.type.value))
+            return True
+
+    async def _reply_group_text(self, message: GroupMessage, content: str) -> None:
+        log_bot_reply("group", message, content)
+        await message._api.post_group_message(
+            group_openid=message.group_openid,
+            msg_type=0,
+            msg_id=message.id,
+            content=content,
+        )
+
+    async def _reply_c2c_text(self, message: C2CMessage, content: str) -> None:
+        log_bot_reply("c2c", message, content)
+        await message._api.post_c2c_message(
+            openid=message.author.user_openid,
+            msg_type=0,
+            msg_id=message.id,
+            content=content,
+        )
 
     async def _reply_group_help_card(self, message: GroupMessage) -> bool:
         try:
@@ -202,6 +230,7 @@ class BrokenArrowBot(botpy.Client):
     async def _reply_group_rank_card(self, message: GroupMessage) -> bool:
         command = parse_command(message.content)
         context = build_user_context(message)
+        image_url = ""
         try:
             steam_id = parse_optional_player_steam_id(command, context, self.bindings)
             player = await self.provider.get_player(steam_id)
@@ -224,11 +253,16 @@ class BrokenArrowBot(botpy.Client):
             return False
         except Exception:
             LOGGER.exception("failed to send group rank card")
-            return False
+            if image_url:
+                await self._reply_group_text(message, image_send_failure_text(image_url))
+            else:
+                await self._reply_group_text(message, data_query_failure_text(command.type.value))
+            return True
 
     async def _reply_c2c_rank_card(self, message: C2CMessage) -> bool:
         command = parse_command(message.content)
         context = build_user_context(message)
+        image_url = ""
         try:
             steam_id = parse_optional_player_steam_id(command, context, self.bindings)
             player = await self.provider.get_player(steam_id)
@@ -251,7 +285,11 @@ class BrokenArrowBot(botpy.Client):
             return False
         except Exception:
             LOGGER.exception("failed to send c2c rank card")
-            return False
+            if image_url:
+                await self._reply_c2c_text(message, image_send_failure_text(image_url))
+            else:
+                await self._reply_c2c_text(message, data_query_failure_text(command.type.value))
+            return True
 
     async def _reply_group_server_condition_card(self, message: GroupMessage) -> bool:
         try:
@@ -305,6 +343,7 @@ class BrokenArrowBot(botpy.Client):
     async def _reply_group_recent_card(self, message: GroupMessage) -> bool:
         command = parse_command(message.content)
         context = build_user_context(message)
+        image_url = ""
         try:
             steam_id, days = parse_recent_argument(command.argument, context, self.bindings)
             player = await self.provider.get_player(steam_id)
@@ -337,11 +376,16 @@ class BrokenArrowBot(botpy.Client):
             return False
         except Exception:
             LOGGER.exception("failed to send group recent card")
-            return False
+            if image_url:
+                await self._reply_group_text(message, image_send_failure_text(image_url))
+            else:
+                await self._reply_group_text(message, data_query_failure_text(command.type.value))
+            return True
 
     async def _reply_c2c_recent_card(self, message: C2CMessage) -> bool:
         command = parse_command(message.content)
         context = build_user_context(message)
+        image_url = ""
         try:
             steam_id, days = parse_recent_argument(command.argument, context, self.bindings)
             player = await self.provider.get_player(steam_id)
@@ -374,7 +418,11 @@ class BrokenArrowBot(botpy.Client):
             return False
         except Exception:
             LOGGER.exception("failed to send c2c recent card")
-            return False
+            if image_url:
+                await self._reply_c2c_text(message, image_send_failure_text(image_url))
+            else:
+                await self._reply_c2c_text(message, data_query_failure_text(command.type.value))
+            return True
 
 
 def build_intents() -> botpy.Intents:
@@ -478,6 +526,21 @@ def parse_optional_player_steam_id(command, context: UserContext, bindings: Bind
     if command.argument.strip():
         return command.argument.strip()
     return require_bound_steam_id(context, bindings)
+
+
+def image_send_failure_text(image_url: str) -> str:
+    return (
+        "数据已经查到，但 QQ 下载图片失败了。\n"
+        "请检查图片公网地址是否能直接打开：\n"
+        f"{image_url}"
+    )
+
+
+def data_query_failure_text(command_name: str) -> str:
+    return (
+        f"/{command_name} 查询失败：数据接口暂时不可用或返回异常。\n"
+        "请稍后重试；如果持续失败，请把你输入的完整指令和时间发给维护者。"
+    )
 
 
 def start_log_pruner() -> None:

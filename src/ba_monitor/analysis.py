@@ -139,14 +139,18 @@ def format_server_condition(condition: ServerCondition) -> str:
 
 def parse_recent_argument(argument: str, context: UserContext, bindings: BindingStore) -> tuple[str, int]:
     parts = argument.split()
-    steam_id = ""
     days = 1
-    for part in parts:
-        if part.isdigit() and len(part) < 16:
+    query_parts: list[str] = []
+    if len(parts) == 1 and parts[0].isdigit() and len(parts[0]) < 16:
+        return require_bound_steam_id(context, bindings), parse_recent_days(parts[0])
+
+    for index, part in enumerate(parts):
+        if part.isdigit() and 1 <= int(part) <= 30 and (index == 0 or query_parts):
             days = parse_recent_days(part)
         else:
-            steam_id = part
-    return steam_id or require_bound_steam_id(context, bindings), days
+            query_parts.append(part)
+    query = " ".join(query_parts).strip()
+    return query or require_bound_steam_id(context, bindings), days
 
 
 def parse_recent_days(value: str) -> int:

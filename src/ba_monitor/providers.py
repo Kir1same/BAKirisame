@@ -7,6 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import asyncio
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
@@ -342,7 +343,7 @@ class BarmoryStbProvider:
         match_ids = await self._get_stb(f"/stb/commander/{commander_id}/matches", cache_key="hour")
         summaries: list[RecentMatch] = []
         cutoff = int(time.time()) - days * 24 * 60 * 60
-        scan_limit = min(len(match_ids), max(limit * 4, days * 24))
+        scan_limit = min(len(match_ids), max(limit * 8, days * 80, 200))
         for match_id in match_ids[:scan_limit]:
             try:
                 match_data = await self._get_stb(f"/stb/match/{match_id}", cache_key=None)
@@ -543,14 +544,24 @@ def _request_json(method: str, url: str, headers: dict[str, str], payload: objec
     data = None
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            raw = response.read().decode("utf-8")
-            return json.loads(raw)
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"BArmory request failed: {exc.code} {body[:200]}") from exc
+    last_error: Exception | None = None
+    for attempt in range(3):
+        request = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                raw = response.read().decode("utf-8")
+                return json.loads(raw)
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            if exc.code < 500 or attempt == 2:
+                raise RuntimeError(f"BArmory request failed: {exc.code} {body[:200]}") from exc
+            last_error = exc
+        except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+            if attempt == 2:
+                raise RuntimeError(f"BArmory request failed: {exc}") from exc
+            last_error = exc
+        time.sleep(0.6 * (attempt + 1))
+    raise RuntimeError(f"BArmory request failed: {last_error}")
 
 
 def _plain_headers() -> dict[str, str]:
