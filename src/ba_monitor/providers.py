@@ -306,11 +306,16 @@ class BarmoryStbProvider:
         self._batrace_base_url = "https://app.batrace.top"
         self._leaderboard_total: int | None = None
         self._leaderboard_total_loaded = False
+        self._cache: dict[str, tuple[float, object]] = {}
 
     async def get_player(self, query: str) -> PlayerStats:
         steam_id = await self._resolve_steam_id(query)
-        profile = await self._get_stb(f"/stb/commander/{steam_id}/steam", cache_key="day")
-        stats = await self._get_stb(f"/stb/commander/{steam_id}/stats", cache_key="day")
+        await self._get_attest_token()
+        profile, stats, ranked_total = await asyncio.gather(
+            self._get_stb(f"/stb/commander/{steam_id}/steam", cache_key="day"),
+            self._get_stb(f"/stb/commander/{steam_id}/stats", cache_key="day"),
+            self._get_leaderboard_total(),
+        )
         rating_stats = stats.get("statisticByLobbyType", {}).get("Rating", {})
         matches = int(rating_stats.get("fightsCount") or 0)
         wins = int(rating_stats.get("winsCount") or 0)
@@ -330,7 +335,7 @@ class BarmoryStbProvider:
             kills=kills,
             deaths=deaths,
             total_match_time_seconds=int(rating_stats.get("totalMatchTimeSec") or 0),
-            ranked_total=await self._get_leaderboard_total(),
+            ranked_total=ranked_total,
             updated_at=stats.get("updateDate"),
         )
 
@@ -340,41 +345,78 @@ class BarmoryStbProvider:
         limit = max(1, min(limit, 100))
         profile = await self._get_stb(f"/stb/commander/{steam_id}/steam", cache_key="day")
         commander_id = profile["id"]
+        try:
+            summaries = await self._get_recent_matches_from_stb(int(commander_id), days, limit)
+        except Exception:
+            summaries = []
+        if summaries:
+            return summaries
+        return await self._get_recent_matches_from_batrace(int(commander_id), days, limit)
+
+    async def _get_recent_matches_from_stb(self, commander_id: int, days: int, limit: int) -> list[RecentMatch]:
         match_ids = await self._get_stb(f"/stb/commander/{commander_id}/matches", cache_key="hour")
         summaries: list[RecentMatch] = []
         cutoff = int(time.time()) - days * 24 * 60 * 60
-        scan_limit = min(len(match_ids), max(limit * 8, days * 80, 200))
-        for match_id in match_ids[:scan_limit]:
-            try:
-                match_data = await self._get_stb(f"/stb/match/{match_id}", cache_key=None)
-            except RuntimeError as exc:
-                if "BArmory request failed: 404" in str(exc):
-                    continue
-                raise
-            summary = _recent_match_from_stb(int(match_id), int(commander_id), match_data)
+        scan_count = min(len(match_ids), min(max(limit * 10, days * 20, 200), 500))
+        scan_ids = [int(match_id) for match_id in match_ids[:scan_count]]
+        match_data_items = await self._get_stb_matches_batch(scan_ids)
+        for match_id, match_data in match_data_items:
+            summary = _recent_match_from_stb(match_id, commander_id, match_data)
             if summary.ended_at is not None and summary.ended_at < cutoff:
                 continue
             summaries.append(summary)
-            if len(summaries) >= limit:
-                break
-        return summaries
+        summaries.sort(key=lambda item: item.ended_at or 0, reverse=True)
+        return summaries[:limit]
+
+    async def _get_stb_matches_batch(self, match_ids: list[int]) -> list[tuple[int, dict]]:
+        if not match_ids:
+            return []
+        cache_key = f"stb:matches:{','.join(str(match_id) for match_id in match_ids)}"
+        cached = self._cache_get(cache_key)
+        if isinstance(cached, list):
+            return cached
+        token = await self._get_attest_token()
+        headers = self._headers("stb", token)
+        payload = await asyncio.to_thread(
+            _request_json,
+            "POST",
+            f"{self.base_url}/stb/matches",
+            headers,
+            match_ids,
+        )
+        if not isinstance(payload, list):
+            return []
+        matches: list[tuple[int, dict]] = []
+        for index, item in enumerate(payload):
+            try:
+                data = json.loads(item) if isinstance(item, str) else item
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(data, dict):
+                continue
+            match_id = _optional_int(data.get("Id") or data.get("id") or data.get("MatchId")) or match_ids[index]
+            matches.append((match_id, data))
+        self._cache_set(cache_key, matches, ttl_seconds=12 * 60 * 60)
+        return matches
+
+    async def _get_recent_matches_from_batrace(self, commander_id: int, days: int, limit: int) -> list[RecentMatch]:
+        payload = await self._get_batrace_player_analysis(commander_id)
+        return _recent_matches_from_batrace(payload if isinstance(payload, dict) else {}, days, limit)
 
     async def get_player_analysis(self, steam_id: str) -> PlayerAnalysis | None:
         steam_id = await self._resolve_steam_id(steam_id)
         profile = await self._get_stb(f"/stb/commander/{steam_id}/steam", cache_key="day")
         commander_id = profile["id"]
         try:
-            payload = await asyncio.to_thread(
-                _request_json,
-                "GET",
-                f"{self._batrace_base_url}/api/analysis/player?stbid={commander_id}",
-                _plain_headers(),
-            )
+            payload = await self._get_batrace_player_analysis(int(commander_id))
         except Exception:
             return None
         return _player_analysis_from_batrace(payload)
 
     async def get_player_distribution(self) -> PlayerDistribution:
+        cached = self._cache_get("batrace:distribution:rating")
+        if isinstance(cached, PlayerDistribution):
+            return cached
         try:
             payload = await asyncio.to_thread(
                 _request_json,
@@ -384,9 +426,14 @@ class BarmoryStbProvider:
             )
         except Exception as exc:
             raise RuntimeError("无法获取全服分布数据") from exc
-        return _player_distribution_from_batrace(payload if isinstance(payload, dict) else {})
+        distribution = _player_distribution_from_batrace(payload if isinstance(payload, dict) else {})
+        self._cache_set("batrace:distribution:rating", distribution, ttl_seconds=30 * 60)
+        return distribution
 
     async def get_server_condition(self) -> ServerCondition:
+        cached = self._cache_get("server-condition")
+        if isinstance(cached, ServerCondition):
+            return cached
         cache_buster = int(time.time())
         try:
             payload = await asyncio.to_thread(
@@ -397,6 +444,7 @@ class BarmoryStbProvider:
             )
             condition = _server_condition_from_batrace(payload if isinstance(payload, dict) else {})
             if _server_condition_is_fresh(condition):
+                self._cache_set("server-condition", condition, ttl_seconds=30)
                 return condition
         except Exception:
             pass
@@ -407,7 +455,9 @@ class BarmoryStbProvider:
             "https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=1604270",
             _plain_headers(),
         )
-        return _server_condition_from_steam(payload if isinstance(payload, dict) else {})
+        condition = _server_condition_from_steam(payload if isinstance(payload, dict) else {})
+        self._cache_set("server-condition", condition, ttl_seconds=30)
+        return condition
 
     async def get_match(self, match_id: str) -> MatchSummary:
         numeric_id = int(match_id.strip())
@@ -422,7 +472,12 @@ class BarmoryStbProvider:
 
     async def _resolve_steam_id(self, query: str) -> str:
         cleaned = query.strip()
+        cache_key = f"resolve:{cleaned.casefold()}"
+        cached = self._cache_get(cache_key)
+        if isinstance(cached, str):
+            return cached
         if cleaned.isdigit() and len(cleaned) >= 16:
+            self._cache_set(cache_key, cleaned, ttl_seconds=24 * 60 * 60)
             return cleaned
         if cleaned.isdigit():
             payload = await asyncio.to_thread(
@@ -435,6 +490,7 @@ class BarmoryStbProvider:
             if isinstance(info, dict):
                 steam_id = str(info.get("steamId") or info.get("steam_id") or "")
                 if steam_id.isdigit() and len(steam_id) >= 16:
+                    self._cache_set(cache_key, steam_id, ttl_seconds=24 * 60 * 60)
                     return steam_id
             raise ValueError(f"没有找到 ID 为 {cleaned} 的玩家。")
 
@@ -457,9 +513,18 @@ class BarmoryStbProvider:
             ),
             None,
         )
-        player = exact or next((player for player in players if isinstance(player, dict)), None)
-        steam_id = str((player or {}).get("steam_id") or (player or {}).get("steamId") or "")
+        if exact is None:
+            candidates = [
+                str(player.get("name") or player.get("id") or player.get("stbId") or "unknown")
+                for player in players[:5]
+                if isinstance(player, dict)
+            ]
+            suffix = f"候选：{', '.join(candidates)}" if candidates else "没有可用候选。"
+            raise ValueError(f"没有精确匹配到玩家：{cleaned}。请使用玩家ID或完整玩家名。{suffix}")
+
+        steam_id = str(exact.get("steam_id") or exact.get("steamId") or "")
         if steam_id.isdigit() and len(steam_id) >= 16:
+            self._cache_set(cache_key, steam_id, ttl_seconds=24 * 60 * 60)
             return steam_id
         raise ValueError(f"搜索到了玩家 {cleaned}，但没有可用 SteamID。")
 
@@ -473,8 +538,30 @@ class BarmoryStbProvider:
             params["time"] = time.strftime("%Y-%m-%d_%H", time.gmtime())
         if params:
             url = f"{url}?{urllib.parse.urlencode(params)}"
+        cache_entry_key = f"stb:{url}"
+        ttl_seconds = _stb_cache_ttl(path, cache_key)
+        cached = self._cache_get(cache_entry_key)
+        if cached is not None:
+            return cached
         headers = self._headers("stb", token)
-        return await asyncio.to_thread(_request_json, "GET", url, headers)
+        result = await asyncio.to_thread(_request_json, "GET", url, headers)
+        if ttl_seconds > 0:
+            self._cache_set(cache_entry_key, result, ttl_seconds=ttl_seconds)
+        return result
+
+    async def _get_batrace_player_analysis(self, commander_id: int) -> object:
+        cache_key = f"batrace:analysis:{commander_id}"
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+        payload = await asyncio.to_thread(
+            _request_json,
+            "GET",
+            f"{self._batrace_base_url}/api/analysis/player?stbid={commander_id}",
+            _plain_headers(),
+        )
+        self._cache_set(cache_key, payload, ttl_seconds=10 * 60)
+        return payload
 
     async def _get_attest_token(self) -> str:
         now = int(time.time())
@@ -484,7 +571,7 @@ class BarmoryStbProvider:
         payload = await asyncio.to_thread(
             _request_json,
             "POST",
-            f"{self.base_url}/gateway/attest",
+            f"{self.base_url}/pulse",
             self._headers("BEZ"),
             {},
         )
@@ -510,6 +597,19 @@ class BarmoryStbProvider:
             self._leaderboard_total = _optional_int(data.get("total"))
         return self._leaderboard_total
 
+    def _cache_get(self, key: str) -> object | None:
+        item = self._cache.get(key)
+        if item is None:
+            return None
+        expires_at, value = item
+        if expires_at <= time.time():
+            self._cache.pop(key, None)
+            return None
+        return value
+
+    def _cache_set(self, key: str, value: object, ttl_seconds: int) -> None:
+        self._cache[key] = (time.time() + ttl_seconds, value)
+
     def _headers(self, request_type: str, attest_token: str | None = None) -> dict[str, str]:
         headers = {
             "Accept": "application/json",
@@ -517,7 +617,7 @@ class BarmoryStbProvider:
             "Accept-Language": "en-US,en;q=0.9",
             "User-Agent": "BA-Monitor-Kirisame/0.1",
             "X-Barmory-ID": self.client_id,
-            "X-Barmory-Version": "6",
+            "X-Barmory-Version": "7",
             "X-Type": request_type,
         }
         if attest_token:
@@ -539,28 +639,40 @@ def _require_steam_id(query: str) -> str:
         raise ValueError("请输入 SteamID64，例如：76561198157609957")
     return steam_id
 
+def _stb_cache_ttl(path: str, cache_key: str | None) -> int:
+    if "/stb/match/" in path:
+        return 12 * 60 * 60
+    if path.endswith("/matches"):
+        return 2 * 60
+    if cache_key == "day":
+        return 10 * 60
+    if cache_key == "hour":
+        return 2 * 60
+    return 0
+
 
 def _request_json(method: str, url: str, headers: dict[str, str], payload: object | None = None) -> object:
     data = None
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
     last_error: Exception | None = None
-    for attempt in range(3):
+    max_attempts = 2
+    for attempt in range(max_attempts):
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=20) as response:
+            with urllib.request.urlopen(request, timeout=10) as response:
                 raw = response.read().decode("utf-8")
                 return json.loads(raw)
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
-            if exc.code < 500 or attempt == 2:
+            if exc.code < 500 or attempt == max_attempts - 1:
                 raise RuntimeError(f"BArmory request failed: {exc.code} {body[:200]}") from exc
             last_error = exc
         except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
-            if attempt == 2:
+            if attempt == max_attempts - 1:
                 raise RuntimeError(f"BArmory request failed: {exc}") from exc
             last_error = exc
-        time.sleep(0.6 * (attempt + 1))
+        time.sleep(0.4 * (attempt + 1))
     raise RuntimeError(f"BArmory request failed: {last_error}")
 
 
@@ -691,6 +803,53 @@ def _player_analysis_from_batrace(data: dict) -> PlayerAnalysis:
         recent_avg_net_score=_recent_avg_net_score(trend_points),
         recent_rating_delta=_recent_rating_delta(trend_points),
     )
+
+
+def _recent_matches_from_batrace(data: dict, days: int, limit: int) -> list[RecentMatch]:
+    points = data.get("trend", {}).get("points", [])
+    if not isinstance(points, list):
+        return []
+    cutoff = int(time.time()) - max(1, days) * 24 * 60 * 60
+    matches: list[RecentMatch] = []
+    for item in sorted((point for point in points if isinstance(point, dict)), key=lambda point: _optional_int(point.get("endTime")) or 0, reverse=True):
+        ended_at = _optional_int(item.get("endTime"))
+        if ended_at is not None and ended_at < cutoff:
+            break
+        match_id = _optional_int(item.get("matchId"))
+        if match_id is None:
+            continue
+        rating_before = _optional_float(item.get("ratingBefore"))
+        rating_after = _optional_float(item.get("ratingAfter"))
+        rating_delta = None
+        if rating_before is not None and rating_after is not None:
+            rating_delta = rating_after - rating_before
+        won = item.get("won")
+        if won is True:
+            result = "win"
+        elif won is False:
+            result = "loss"
+        elif rating_delta is not None and rating_delta > 0:
+            result = "win"
+        elif rating_delta is not None and rating_delta < 0:
+            result = "loss"
+        else:
+            result = "unknown"
+        matches.append(
+            RecentMatch(
+                match_id=match_id,
+                map_id=None,
+                result=result,
+                rating_delta=rating_delta,
+                duration_seconds=None,
+                ended_at=ended_at,
+                destruction_score=_optional_float(item.get("destructionScore")),
+                losses_score=_optional_float(item.get("lossesScore")),
+                objectives_captured=_optional_int(item.get("objectivesCaptured")),
+            )
+        )
+        if len(matches) >= limit:
+            break
+    return matches
 
 
 def _player_distribution_from_batrace(data: dict) -> PlayerDistribution:

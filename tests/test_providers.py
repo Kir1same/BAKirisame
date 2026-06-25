@@ -5,6 +5,7 @@ import pytest
 import ba_monitor.providers as providers
 from ba_monitor.providers import (
     BarmoryStbProvider,
+    _recent_matches_from_batrace,
     _recent_match_from_stb,
     _server_condition_from_batrace,
     _server_condition_from_steam,
@@ -67,6 +68,23 @@ async def test_resolve_player_name_prefers_exact_match(monkeypatch) -> None:
     assert steam_id == "76561198379902699"
 
 
+@pytest.mark.asyncio
+async def test_resolve_player_name_rejects_non_exact_match(monkeypatch) -> None:
+    def fake_request_json(method, url, headers, payload=None):
+        assert "players/search" in url
+        return {
+            "players": [
+                {"name": "山雾谷雨", "steam_id": "76561198379902699"},
+                {"name": "Pazuzu_", "steam_id": "76561198000000002"},
+            ]
+        }
+
+    monkeypatch.setattr(providers, "_request_json", fake_request_json)
+
+    with pytest.raises(ValueError, match="没有精确匹配到玩家"):
+        await BarmoryStbProvider()._resolve_steam_id("Pazuzu")
+
+
 def test_server_condition_from_batrace() -> None:
     condition = _server_condition_from_batrace(
         {
@@ -86,6 +104,46 @@ def test_server_condition_from_batrace() -> None:
 
     assert condition.online == 3157
     assert condition.regions[0].region == "亚太"
+
+
+def test_recent_matches_from_batrace(monkeypatch) -> None:
+    monkeypatch.setattr("ba_monitor.providers.time.time", lambda: 1_000_000)
+
+    matches = _recent_matches_from_batrace(
+        {
+            "trend": {
+                "points": [
+                    {
+                        "matchId": "101",
+                        "endTime": 999_900,
+                        "won": True,
+                        "ratingBefore": 1800,
+                        "ratingAfter": 1825.5,
+                        "destructionScore": 7065,
+                        "lossesScore": 3530,
+                        "objectivesCaptured": 2,
+                    },
+                    {
+                        "matchId": "99",
+                        "endTime": 800_000,
+                        "won": False,
+                        "ratingBefore": 1825,
+                        "ratingAfter": 1800,
+                    },
+                ]
+            }
+        },
+        days=1,
+        limit=10,
+    )
+
+    assert len(matches) == 1
+    assert matches[0].match_id == 101
+    assert matches[0].result == "win"
+    assert matches[0].rating_delta == 25.5
+    assert matches[0].destruction_score == 7065
+    assert matches[0].losses_score == 3530
+    assert matches[0].objectives_captured == 2
 
 
 def test_server_condition_from_steam() -> None:
