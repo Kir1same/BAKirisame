@@ -357,7 +357,7 @@ class BarmoryStbProvider:
         match_ids = await self._get_stb(f"/stb/commander/{commander_id}/matches", cache_key="hour")
         summaries: list[RecentMatch] = []
         cutoff = int(time.time()) - days * 24 * 60 * 60
-        scan_count = min(len(match_ids), min(max(limit * 10, days * 20, 200), 500))
+        scan_count = min(len(match_ids), min(max(limit * 8, days * 12, 40), 80))
         scan_ids = [int(match_id) for match_id in match_ids[:scan_count]]
         match_data_items = await self._get_stb_matches_batch(scan_ids)
         for match_id, match_data in match_data_items:
