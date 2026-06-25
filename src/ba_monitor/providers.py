@@ -371,6 +371,12 @@ class BarmoryStbProvider:
     async def _get_stb_matches_batch(self, match_ids: list[int]) -> list[tuple[int, dict]]:
         if not match_ids:
             return []
+        matches: list[tuple[int, dict]] = []
+        for chunk in _chunks(match_ids, 20):
+            matches.extend(await self._get_stb_matches_batch_chunk(chunk))
+        return matches
+
+    async def _get_stb_matches_batch_chunk(self, match_ids: list[int]) -> list[tuple[int, dict]]:
         cache_key = f"stb:matches:{','.join(str(match_id) for match_id in match_ids)}"
         cached = self._cache_get(cache_key)
         if isinstance(cached, list):
@@ -649,6 +655,10 @@ def _stb_cache_ttl(path: str, cache_key: str | None) -> int:
     if cache_key == "hour":
         return 2 * 60
     return 0
+
+
+def _chunks(items: list[int], size: int) -> list[list[int]]:
+    return [items[index : index + size] for index in range(0, len(items), size)]
 
 
 def _request_json(method: str, url: str, headers: dict[str, str], payload: object | None = None) -> object:
